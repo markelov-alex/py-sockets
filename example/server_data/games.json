@@ -1,0 +1,69 @@
+{
+  "POKER_HOLDEM": {
+
+  },
+  "POKER_OMAHA": {
+
+  },
+  "POKER_OMAHA_HILO": {
+
+  },
+  "POKER_STUD": {
+
+  },
+  "POKER_STUD_HILO": {
+
+  },
+
+  "TYPE_CASH": {
+
+  },
+  "TYPE_SIT_AND_GO": {
+
+  },
+  "TYPE_MULTI_TABLE_TOURNEY": {
+
+  },
+  "TYPE_FAST": {
+
+  },
+
+  "CASH_CLASSIC": {
+
+  },
+  "CASH_ANTE": {
+
+  },
+  "CASH_CAP": {
+
+  },
+
+  "SNG_CLASSIC": {
+
+  },
+  "SNG_TURBO": {
+
+  },
+  "SNG_SUPER_TURBO": {
+
+  },
+
+  "MTT_CLASSIC": {
+
+  },
+  "MTT_KNOCKOUT": {
+
+  },
+  "MTT_REBUY": {
+
+  },
+  "MTT_FREEZEOUT": {
+
+  },
+  "MTT_CASHOUT": {
+
+  },
+  "MTT_SHOOTOUT": {
+
+  }
+}

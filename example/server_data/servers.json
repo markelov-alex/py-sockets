@@ -1,0 +1,20 @@
+[
+  [
+    1,
+    "server1",
+    "localhost",
+    41000
+  ],
+  [
+    2,
+    "server2",
+    "localhost",
+    41001
+  ],
+  [
+    3,
+    "server3",
+    "localhost",
+    41002
+  ]
+]

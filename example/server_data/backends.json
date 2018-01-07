@@ -1,0 +1,41 @@
+{
+  "default": "fb",
+  
+  "fb": {
+    "domain": "fb.poker.com",
+    "secured": true,
+    "app_secret": "",
+    "napalm_secret": ""
+  },
+  "fb_dev": {
+    "domain": "fb.dev.poker.com",
+    "secured": true,
+    "app_secret": "",
+    "napalm_secret": ""
+  },
+  
+  "fb_local": {
+    "domain": "fb.poker.local",
+    "secured": true,
+    "app_secret": "",
+    "napalm_secret": ""
+  },
+  "vk_local": {
+    "domain": "vk.poker.local",
+    "secured": true,
+    "app_secret": "",
+    "napalm_secret": ""
+  },
+  "ok_local": {
+    "domain": "ok.poker.local",
+    "secured": true,
+    "app_secret": "",
+    "napalm_secret": ""
+  },
+  "mm_local": {
+    "domain": "mm.poker.local",
+    "secured": true,
+    "app_secret": "",
+    "napalm_secret": ""
+  }
+}
