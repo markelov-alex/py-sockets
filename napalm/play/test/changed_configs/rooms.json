@@ -1,0 +1,41 @@
+{
+    "holdem_25_50": {
+        "room_id": null,
+        "room_name": "1_room0001",
+        "room_code": "1_H_10_0",
+        "game_params": {
+            "min_stake": 25,
+            "max_stake": 50,
+            "min_buy_in": 500,
+            "max_buy_in": 10000,
+            "pot_limit_type": null,
+            "average_pot": null,
+            "players_per_flop_percents": null
+        },
+        "tournament_type": 0,
+        "max_tournament_game_count": -1,
+        "max_player_count": 9,
+        "max_visitor_count": -1,
+        "room_password": "",
+        "turn_timeout_sec": 10
+    },
+    "holdem_50_100": [
+        null,
+        "1_room0002",
+        "1_H_10_0",
+        [
+            50,
+            100,
+            1000,
+            20000
+        ],
+        0,
+        -1,
+        6,
+        -1,
+        "",
+        10
+    ],
+    "extra1": "holdem_50_100",
+    "extra2": "holdem_25_50"
+}

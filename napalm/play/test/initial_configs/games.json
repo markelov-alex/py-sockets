@@ -1,0 +1,38 @@
+{
+  "1": {
+    "_name_": "POKER",
+    "_": "",
+    "resume_game_countdown_sec": 0
+  },
+
+  "H": {
+    "_name_": "POKER_HOLDEM",
+    "param1": "value1",
+    "param2": "value2",
+    "param3": "value3"
+  },
+  "OH": {
+    "_name_": "POKER_OMAHA_HILO",
+    "param1": "value3",
+    "param2": "value4",
+    "param3": null
+  },
+
+  "11": {
+    "_name_": "CASH_ANTE",
+    "_": "",
+    "": ""
+  },
+  "40": {
+    "_name_": "TYPE_FAST",
+    "_": "",
+    "": ""
+  },
+
+  "2": {
+    "_name_": "MONOPOLY",
+    "_": "",
+    "is_join_only_between_games": true,
+    "is_find_free_place_if_specified_one_taken": false
+  }
+}

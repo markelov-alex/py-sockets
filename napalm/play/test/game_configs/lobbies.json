@@ -1,0 +1,68 @@
+{
+  "4": "1",
+  "1": {
+    "-comment-": "lobby_id: 1 - we cannot set lobby_id=null, because it used in servers.json in 'lobbies' list",
+    "-comment2-": "---Should be on the 1-index position to be set lobby_id=1",
+    "lobby_id": 1,
+    "lobby_name": "Lobby 1",
+    "rooms": [
+      "extra1",
+      "extra2",
+      {
+        "base": "holdem_25_50",
+        "room_id": 1,
+        "room_name": "1_room1"
+      },
+      [
+        2,
+        "1_room2",
+        "1_H_40_0",
+        [
+          25,
+          50,
+          500,
+          10000
+        ],
+        0,
+        -1,
+        6,
+        -1
+      ],
+      [
+        null,
+        "1_room3",
+        "1_H_10_0",
+        [
+          50,
+          100,
+          5000,
+          100000
+        ],
+        1,
+        -1,
+        6
+      ],
+      {
+        "-comment-": "Overwrites previous which lies on 4-th index and has lobby_id=4, but apply_changes() needed!!!",
+        "base": "holdem_25_50",
+        "room_id": 4,
+        "room_name": "1_room4"
+      }
+    ]
+  },
+  "2": {
+    "base": 1,
+    "lobby_id": "2",
+    "lobby_name": "Lobby 2",
+    "rooms": [
+      "extra1",
+      "extra2",
+      [1, "2_room11", "1_H_10_0", [50, 100, 5000, 100000], 0, -1, 6]
+    ]
+  },
+  "3": {
+    "lobby_id": 3,
+    "lobby_name": null,
+    "rooms": null
+  }
+}

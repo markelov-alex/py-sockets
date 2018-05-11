@@ -1,6 +1,7 @@
 import sys
 
 
+# todo use standard getopt library, for example
 def get_command_line_param(key, default=None):
     """
     Get param value from sys.argv.

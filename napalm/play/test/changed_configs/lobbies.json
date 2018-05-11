@@ -1,0 +1,61 @@
+{
+  "4": "1",
+  "1": {
+    "-comment-": "lobby_id: 1 - we cannot set lobby_id=null, because it used in servers.json in 'lobbies' list",
+    "lobby_id": 1,
+    "lobby_name": "Lobby 1 changed",
+    "rooms": {
+      "extra1": "extra1",
+      "extra2": "extra2",
+      "some": {
+        "base": "holdem_25_50",
+        "room_id": 1
+      },
+      "2": [
+        2,
+        "1_room002",
+        "1_H_40_0",
+        [
+          25,
+          50,
+          500,
+          10000
+        ],
+        0,
+        -1,
+        6,
+        -1
+      ]
+    }
+  },
+  "2": {
+    "base": 1,
+    "lobby_id": "2",
+    "lobby_name": "Lobby 2 changed",
+    "rooms": [
+      "extra1",
+      "extra1",
+      "extra2",
+      "extra2",
+      [
+        1,
+        "2_room11",
+        "1_H_10_0",
+        [
+          50,
+          100,
+          5000,
+          100000
+        ],
+        0,
+        -1,
+        6
+      ]
+    ]
+  },
+  "3": {
+    "lobby_id": 3,
+    "lobby_name": "Lobby 3 changed",
+    "rooms": ["holdem_25_50", "holdem_25_50", "holdem_25_50"]
+  }
+}

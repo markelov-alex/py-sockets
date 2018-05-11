@@ -1,0 +1,27 @@
+{
+  "1": {
+    "_name_": "POKER",
+    "param1": "value__01",
+    "param2": "value__02",
+    "param3": "value__03",
+    "param4": "value__04"
+  },
+
+  "H": {
+    "_name_": "POKER_HOLDEM",
+    "param1": "value001",
+    "param2": "value002"
+  },
+  "OH": {
+    "_name_": "POKER_OMAHA_HILO",
+    "param1": "value003",
+    "param2": "value004",
+    "param3": "value005"
+  },
+
+  "40": {
+    "_name_": "TYPE_FAST",
+    "param1": "value__401",
+    "param2": "value__402"
+  }
+}

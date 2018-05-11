@@ -1,0 +1,39 @@
+[
+  {
+    "-comment-": "takes house_id from list index: house_id='0'",
+    "house_name": "server1",
+    "host": "localhost",
+    "port": 41001,
+    "lobbies": null,
+    "some_unknown": 100
+  },
+  {
+    "house_id": 2,
+    "house_name": "server2",
+    "host": "localhost2",
+    "port": 41235,
+    "lobbies": ["2", "3"]
+  },
+  [
+    3,
+    "server3",
+    "localhost3",
+    41003,
+    null
+  ],
+  {
+    "base": "2",
+    "house_id": 1,
+    "port": 41010,
+
+    "-comment-": "the next items (below) takes info by alias from 0-th item and set own index as house_id=4 and 5"
+  },
+  "0",
+  "0",
+  {
+    "base": "0",
+    "house_id": 1,
+    "port": 41000,
+    "-comment-": "As model with house_id='1' is already created, it only overwrites specified info (0-th item and 'port')"
+  }
+]

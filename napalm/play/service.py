@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 
 import certifi
 import requests
@@ -9,37 +10,86 @@ import urllib3
 class GameService:
     """
     To make requests to PHP server.
-    """
-    
-    domain = None
-    secured = True
-    app_secret = None
-    napalm_secret = None
-    
-    def __init__(self, social_id=None, access_token=None, auth_sig=None, backend_info=None):
-        self.social_id = social_id
-        self.access_token = access_token
-        self.auth_sig = auth_sig
-        if (backend_info):
-            self.domain = backend_info["domain"]
-            self.secured = backend_info["secured"]
-            self.app_secret = backend_info["app_secret"]
-            self.napalm_secret = backend_info["napalm_secret"]
 
-    def check_auth_sig(self):
+    TODO return cached values on request is too frequent
+    """
+
+    @staticmethod
+    def make_auth_sig(social_id, access_token, app_secret):
+        if not social_id or not access_token or not app_secret:
+            return "(empty_auth_arg)"
         md5 = hashlib.md5()
-        md5.update(self.social_id + "_" + self.access_token + "_" + self.app_secret)
+        md5.update((social_id + "_" + access_token + "_" + app_secret).encode('utf-8'))
         sig = md5.hexdigest()
+        return sig
+
+    logging = None
+
+    social_id = None
+    access_token = None
+    auth_sig = None
+    backend_info = None
+
+    @property
+    def domain(self):
+        return self.backend_info["domain"]
+
+    @property
+    def secured(self):
+        return self.backend_info["secured"]
+
+    @property
+    def app_secret(self):
+        return self.backend_info["app_secret"]
+
+    @property
+    def napalm_secret(self):
+        return self.backend_info["napalm_secret"]
+
+    def __init__(self):  # , social_id=None, access_token=None, auth_sig=None, backend_info=None):
+        self.logging = logging.getLogger("SERVICE")
+
+        # self.social_id = social_id
+        # self.access_token = access_token
+        # self.auth_sig = auth_sig
+        # if backend_info:
+        #     self.domain = backend_info["domain"]
+        #     self.secured = backend_info["secured"]
+        #     self.app_secret = backend_info["app_secret"]
+        #     self.napalm_secret = backend_info["napalm_secret"]
+
+    # todo call
+    def dispose(self):
+        self.logging = None
+
+    def check_auth_sig(self, social_id, access_token, auth_sig, backend_info=None):
+        if self.social_id and social_id != self.social_id:
+            return False
+
+        self.backend_info = backend_info or self.backend_info
+        if not self.app_secret:
+            return False
+
+        sig = self.__class__.make_auth_sig(social_id, access_token, self.app_secret)
 
         # Log if mismatch
-        if sig != self.auth_sig:
-            print("L (create_player) WARNING! auth_sig mismatch!", "social_id:", self.social_id,
-                  self.social_id + "_" + self.access_token + "_" + self.app_secret,
-                  "=> sig:", sig, "!= auth_sig:", self.auth_sig)
+        if sig != auth_sig:
+            self.logging.warning(
+                "WARNING! auth_sig mismatch! social_id: %s  %s => sig: %s != auth_sig: %s",
+                self.social_id, self.social_id + "_" + access_token + "_" + self.app_secret, sig, auth_sig)
+        else:
+            # Set up
+            # (Note: Updating credentials we are trying to avoid access_token expire)
+            self.social_id = social_id
+            self.access_token = access_token
+            self.auth_sig = auth_sig
 
-        return sig == self.auth_sig
+        return sig == auth_sig
 
     def getCurrentUserFullInfo(self):
+        if not self.access_token:
+            return
+
         data = self._request("User", "getCurrentUserFullInfo")
         # {"social_id": 10306045, "level": 51, "country": "Беларусь", "is_online": 0, "server": 1,
         #  "updated_at": "2017-08-29 10:49:13", "created_at": "2017-08-29 10:49:13", "id": 46629,
@@ -67,16 +117,41 @@ class GameService:
         game = data["game_data"]
         stats = data["poker_stats"]
         best_hand = stats["best_hand"].split(";")
-        user_info = [data["id"], data["social_id"], data["first_name"], data["last_name"], data["profile_url"], None, None, 
-                     data["level"], game["money"], 0, 0, data["created_at"], "", 0, 0, best_hand[0], best_hand[1]]
+        user_info = [str(data["id"]), str(data["social_id"]), data["first_name"], data["last_name"],
+                     data["profile_url"], None, None, data["level"], game["money"], 0, 0, data["created_at"], "",
+                     0, 0, best_hand[0] if len(best_hand) else '', best_hand[1] if len(best_hand) > 1 else '']
         return user_info
 
-    def increase(self, money):
-        data = json.dumps({"money": money})
+    def increase(self, money=0, xp=0):
+        if not self.access_token:
+            return
+
+        data = {}
+        if money > 0:
+            data["money"] = money
+        if xp > 0:
+            data["xp"] = xp
+
+        if not data:
+            return {}
+
+        data = json.dumps(data)
         return self._request("User", "increase", {"data": data}, secure=True)
 
-    def decrease(self, money):
-        data = json.dumps({"money": money})
+    def decrease(self, money=0, xp=0):
+        if not self.access_token:
+            return
+
+        data = {}
+        if money > 0:
+            data["money"] = money
+        if xp > 0:
+            data["xp"] = xp
+
+        if not data:
+            return {}
+
+        data = json.dumps(data)
         return self._request("User", "decrease", {"data": data}, secure=True)
 
     # def win(self, pot, max_combo_id, hand_cards, shootout=False, sitngo=False):
@@ -88,10 +163,16 @@ class GameService:
     #     return self._request("User", "loose", secure=True)
 
     def gameEnd(self, winners_data, loser_ids, shootout=False, sitngo=False):
+        if not self.access_token:
+            return
+
         data = json.dumps({"win": winners_data, "loose": loser_ids, "shootout": shootout, "sitngo": sitngo})
         return self._request("User", "gameEnd", {"data": data}, secure=True)
 
     def _request(self, controller, method, data=None, secure=False, post=False):
+        if not self.access_token:
+            return
+
         url = ("https://" if self.secured else "http://") + self.domain + "/api/" + controller + "/" + method
 
         if not data:
@@ -125,4 +206,3 @@ class GameService:
         # result = json.load(response.data.decode("utf-8"))
 
         return result
-       

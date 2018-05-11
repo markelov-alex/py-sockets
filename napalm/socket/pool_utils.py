@@ -3,7 +3,7 @@ import time
 
 class DeferredDisposePool:
     """
-    not used
+    NOT USED
 
     This pool can store instances for some time and dispose them
     on timeout if they were not used again during this period.

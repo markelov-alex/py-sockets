@@ -1,0 +1,45 @@
+{
+  "1": {
+    "-comment-": "Used for test_game",
+    "lobby_id": 1,
+    "lobby_name": "Lobby 1",
+    "rooms": [
+      {
+        "base": "holdem_25_50",
+        "room_id": 1,
+        "room_name": "1_room1",
+        "room_code": "1_H_40_0"
+      },
+      {
+        "base": "holdem_50_100",
+        "room_id": 2,
+        "room_name": "1_room2",
+        "room_code": "2_B_10_0",
+        "tournament_type": 0,
+        "game_params": [50, 100, 0, 100000],
+
+        "waiting_for_other_players_countdown_sec": 15,
+        "start_game_countdown_sec": 3,
+        "game_timeout_sec": 1200
+      },
+      {
+        "base": "holdem_50_100",
+        "room_id": 3,
+        "room_name": "1_room3",
+        "room_code": "1_H_40_0",
+        "tournament_type": 1,
+        "game_params": [50, 100, 0, 100000]
+      }
+    ]
+  },
+  "2": {
+    "base": 1,
+    "lobby_id": "2",
+    "lobby_name": "Lobby 2",
+    "rooms": [
+      [1, "2_room1", "1_H_10_0", [50, 100, 5000, 100000], 0, -1, 6],
+      [2, "2_room2", "1_H_10_0", [50, 100, 5000, 100000], 0, -1, 6],
+      [3, "2_room3", "1_H_10_0", [50, 100, 5000, 100000], 0, -1, 6]
+    ]
+  }
+}

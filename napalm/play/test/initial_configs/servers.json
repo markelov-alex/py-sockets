@@ -1,0 +1,25 @@
+[
+  {
+    "-comment-": "If remove house_id=1, it will take house_id from list index: house_id='0'",
+    "house_id": "1",
+    "house_name": "server1",
+    "host": "localhost",
+    "port": 41001,
+    "lobbies": null,
+    "some_unknown": 100
+  },
+  {
+    "house_id": 2,
+    "house_name": "server2",
+    "host": "localhost",
+    "port": 41002,
+    "lobbies": ["2"]
+  },
+  [
+    3,
+    "server3",
+    "localhost",
+    41003,
+    ["3"]
+  ]
+]

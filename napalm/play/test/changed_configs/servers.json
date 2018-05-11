@@ -1,0 +1,21 @@
+{
+  "1": {
+    "house_name": "server001",
+    "host": "mytest.localhost",
+    "port": 41501,
+    "lobbies": [
+      "3"
+    ],
+    "some_unknown": 100
+  },
+  "2": [
+    3,
+    "server003",
+    "localhost3",
+    41503,
+    {
+      "11": "2",
+      "22": "3"
+    }
+  ]
+}

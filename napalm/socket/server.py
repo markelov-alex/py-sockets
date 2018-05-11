@@ -1,20 +1,37 @@
+import errno
+import logging as _logging
 import socket
 import socketserver
 import threading
+import time
 
-import sys
+from napalm import utils
+
+# Log
+logging = _logging.getLogger("SERVER")
+# Temp
+# utils.default_logging_setup()
 
 try:
-    from twisted.internet import reactor, protocol
-    from twisted.internet.protocol import connectionDone, Protocol
+    from twisted.internet import reactor
+    from twisted.internet.protocol import connectionDone, Protocol, ServerFactory
     from twisted.protocols.basic import LineReceiver
 except ImportError:
-    print("WARN! There is no twisted module!")
+    logging.warning("There is no Twisted module!")
+
+"""
+Conventions:
+"raw" - means data with delimiters, not splitted yet.
+"data" - str data.
+"data_bytes" - bytes data.
+Servers and clients operate only with bytes. Protocol converts bytes to str and wise versa.
+"""
 
 
-class ServerConfig:
+# Common
 
-    COMMAND_END = b"\x00"
+class Config:
+    DELIMITER = b"\x00"
     # 1200 - the most optimal max message size to fit IP(?) frame when using TCP
     RECV_SIZE = 1200  # 1024  # 4096
 
@@ -26,407 +43,492 @@ class ServerConfig:
     def port(self):
         return self._port
 
-    def __init__(self, host="", port=0):
+    def __init__(self, host="", port=0, protocol_class=None):
         self._host = host
         self._port = port
-        
-        # Define subclasses
+        self.protocol_class = protocol_class
+
+
+class ServerConfig(Config):
+    logging = None
+    pass
+
+
+class ProtocolFactory:
+    """
+    Single point of creating protocols to be used by any server type.
+    """
+
+    def __init__(self, config, app=None):
+        self.config = config
+        self.app = app
+
+        self.protocol_class = config.protocol_class
+        self.logging = logging if self.protocol_class and self.protocol_class.is_server_protocol else\
+            _logging.getLogger("CLIENT")
+
+    def dispose(self):
+        self.logging.debug("ProtocolFactory dispose")
+        self.config = None
+        self.app = None
         self.protocol_class = None
+        self.logging = None
+
+    def create(self, send_bytes_method, close_connection_method, address):
+        if not self.protocol_class:
+            return None
+        protocol = self.protocol_class(send_bytes_method, close_connection_method, address, self.config, self.app)
+        self.logging.debug("ProtocolFactory create new protocol: %s for address: %s", protocol, address)
+        return protocol
+
+
+class AbstractServer:
+    def __init__(self, config, app=None):
+        self.config = config
+        self.protocol_factory = ProtocolFactory(config, app)
+        logging.debug("Server created. %s", self)
+
+    def dispose(self):
+        logging.debug("Server disposing...")
+        self.stop()
+
+        if self.protocol_factory:
+            self.protocol_factory.dispose()
+            self.protocol_factory = None
+        self.config = None
+        logging.debug("Server disposed")
+
+    def start(self):
+        raise NotImplemented
+
+    def stop(self):
+        raise NotImplemented
 
 
 # Twisted
 
-
+# TODO try to rename all protocol to protocol (all depend on TwistedHandler)
 class TwistedHandler(LineReceiver):
     delimiter = b"\x00"
-    app_protocol = None
+    protocol = None
 
     def connectionMade(self):
-        print("TW SERVER", self, "+(connectionMade)")
-        server_config = self.factory.app.lobby_model
         # Config
-        self.delimiter = server_config.COMMAND_END
+        self.delimiter = self.factory.config.DELIMITER
         # Create app protocol
-        peer_address = self.transport.getPeer()
-        self.app_protocol = server_config.protocol_class(self.sendLine, self.transport.loseConnection,
-                                                         self.factory.app, (peer_address.host, peer_address.port))
-        # self.app_protocol.send_bytes_method = self.sendLine
-        # self.app_protocol.close_connection_method = self.transport.loseConnection
+        address = self.transport.getPeer()
+        self.protocol = self.factory.protocol_factory.create(self.sendLine, self.transport.loseConnection,
+                                                             (address.host, address.port))
+        logging.debug("connectionMade for %s protocol: %s", address, self.protocol)
+
+    def rawDataReceived(self, data):
+        # Not used while in line_mode
+        pass
 
     def lineReceived(self, line):
-        # line = line.decode()
-        # print("TW SERVER", self, " (lineReceived) line:", line)
+        # logging.debug("dataReceived for %s line: %s", self.protocol, line)
         if line:
-            self.app_protocol.process_commands((line,))
-    #
+            self.protocol.process_bytes_list((line,))
+
     # def sendLine(self, line):
-    #     print("TW SERVER", self, " (sendLine) line:", line)
+    #     logging.debug("sendData for %s line: %s", self.protocol, line)
     #     super().sendLine(line)
 
     def connectionLost(self, reason=connectionDone):
-        print("TW SERVER", self, "-(connectionLost)", reason)
-        self.app_protocol.dispose()
-        self.app_protocol = None
+        logging.debug("connectionLost for %s reason: %s", self.protocol, reason)
+        self.protocol.dispose()
+        self.protocol = None
 
 
-class TwistedHandlerFactory(protocol.ServerFactory):
-    protocol = TwistedHandler
+class TwistedTCPServer(AbstractServer):
+    factory = None
+    port = None
 
-    def __init__(self, app):
-        self.app = app
+    def __init__(self, config, app=None):
+        super().__init__(config, app)
 
-        # def buildProtocol(self, addr):
-        #     p = self.protocol()
-        #     p.factory = self
-        #     return p
+        self.factory = ServerFactory()
+        self.factory.protocol = TwistedHandler
+        # Custom references
+        self.factory.config = config
+        self.factory.protocol_factory = self.protocol_factory
 
-class TwistedTCPServer:
-    def __init__(self, app):
-        print("##(TwistedTCPServer.init) Create Server (Twisted, TCP)", app)
-        if not app:
-            raise Exception("No app object given!")
-
-        self.server_config = app.lobby_model
-        self.factory = TwistedHandlerFactory(app)
-
-    def start(self):
-        reactor.listenTCP(self.server_config.port, self.factory)
-        reactor.run()
-
-
-# Threaded + non-blocking
-
-class ProtocolFactory:
-    """
-    Created to allow server to restore current session after player's reconnection
-    within timeout interval. The problem: do users always have their unique hosts (IP)
-    (port is always unique, so we cannot use (host,port) to identify the player).
-
-    Maybe we should refuse from pooling protocol objects and use Player object pooling
-    by auth token...
-    """
-
-    # We cannot pool removed items because address as a key is weak and we don't have another key
-    REMOVED_ITEM_POOLING_ENABLED = False
-    DISPOSE_OLD_PROTOCOL_TIMEOUT_SEC = 100
-
-    # static
-    dummy_protocol = None
-    #
-    # @property
-    # def connection_count(self):
-    #     return len(self.protocol_list)
-
-    def __init__(self, app, protocol_class):
-        self.app = app
-        self.protocol_class = protocol_class
-
-        # self.protocol_list = []
-
-        # ProtocolFactory.dummy_protocol = protocol_class()
-        # Protocol.dummy_protocol = protocol_class()
-        print("#(ProtocolManager.init) create dummy protocol instance dummy_protocol:", ProtocolFactory.dummy_protocol)
+        self.started = False
+        self.__started_lock = threading.RLock()
 
     def dispose(self):
-        print("#(ProtocolManager.dispose)")
-        # for protocol in self.protocol_list:
-        #     protocol.dispose()
+        super().dispose()
+        if self.factory:
+            self.factory.config = None
+            self.factory.protocol = None
+            self.factory.protocol_factory = None
+            self.factory = None
 
-        # self.protocol_list = []
+    def start(self):
+        self.__started_lock.acquire()
+        if self.started:
+            logging.warning("Server is already running. address: %s", (self.config.host, self.config.port))
+            self.__started_lock.release()
+            return
 
-        self.app = None
-        self.protocol_class = None
+        logging.debug("Server starting... address: %s", (self.config.host, self.config.port))
+        self.started = True
+        self.__started_lock.release()
+        self.port = reactor.listenTCP(self.config.port, self.factory)
+        if not reactor.running:
+            reactor.run()
+        logging.debug("Server started")
 
-        # ProtocolFactory.dummy_protocol = None
-        # Protocol.dummy_protocol = None
+    def stop(self):
+        self.__started_lock.acquire()
+        if not self.started:
+            logging.warning("Server is not running. address: %s", (self.config.host, self.config.port))
+            self.__started_lock.release()
+            return
 
-    def create(self, send_bytes_method, close_method, address):
-        app_protocol = self.protocol_class(send_bytes_method, close_method, self.app, address)
-        # app_protocol.send_bytes_method = request.sendall
-        # app_protocol.close_connection_method = request.close
-        print("#(ProtocolManager.create) create new app_protocol:", app_protocol, "address:", address)
-        return app_protocol
+        logging.debug("Server stopping...")
+        self.started = False
+        self.__started_lock.release()
+        if self.port:
+            # deferred = self.port.stopListening()
+            # if deferred:
+            #     event = threading.Event()
+            #     event.clear()
+            #
+            #     def event_set():
+            #         print("Waiting finished")
+            #         event.set()
+            #     deferred.addCallback(event_set)
+            #     print("Waiting while listening stopping...", deferred)
+            #     event.wait()
+            #     print("Listening stopped")
+            self.port.loseConnection()
+            try:
+                self.port.connectionLost(None)
+            except Exception as error:
+                # Bug in Twisted: sometimes AttributeError ('Port' object has no attribute 'socket') occurs
+                # print("ERROR", error)
+                pass
+            self.port = None
+        # -reactor.stop()
+        # reactor.crash()
+        logging.debug("Server stopped")
+
+        # print("Press Enter to exit...")
+        # input()
+        # # Needed to save lobby state using atexit.register() in app
+        # sys.exit()
 
 
 # Threaded
-
-class ThreadedTCPServer:
-    protocol_factory = None
-
-    def __init__(self, app):
-        print("##(ThreadedTCPServer.init) Create Server (Threaded, TCP)", app)
-        if not app:
-            raise Exception("No app object given!")
-        self.server_config = app.lobby_model
-
-        ThreadedTCPHandler.server_config = self.server_config
-        ThreadedTCPServer.protocol_factory = ProtocolFactory(app, self.server_config.protocol_class)
-
-    def start(self):
-        if not self.server_config:
-            return
-
-        # (Try for multiple servers launched from a single main.py)
-        # class CustomThreadedTCPHandler(ThreadedTCPHandler):
-        #     pass
-        # CustomThreadedTCPHandler.server_config = self.server_config
-
-
-        # Create and start server
-        print("##(ThreadedTCPServer.start) Start Server (Threaded, TCP)",
-              (self.server_config.host, self.server_config.port))
-        server = socketserver.ThreadingTCPServer((self.server_config.host, self.server_config.port), ThreadedTCPHandler)
-
-        try:
-            server.serve_forever()
-        except KeyboardInterrupt as error:
-            print("##(ThreadedTCPServer.start) ^C KeyboardInterrupt", error)
-
-        # Here we shutdowning server
-
-        print("##(ThreadedTCPServer.start) Set abort=True for all threads")
-        # Abort other threads
-        ThreadedTCPHandler.abort = True
-
-        print("##(ThreadedTCPServer.start) Server shutdown and close")
-        server.shutdown()
-        server.server_close()
-        ThreadedTCPServer.protocol_factory.dispose()
-        print("##(ThreadedTCPServer.start) Finish")
-        print("##(ThreadedTCPServer.start) Press Enter to exit...")
-        input()
-        # Needed to save lobby state using atexit.register() in app
-        sys.exit()
-
 
 class ThreadedTCPHandler(socketserver.BaseRequestHandler):
     # static
     abort = False
 
-    recv_buffer = b""
+    buffer_bytes = b""
     # is_first = True
 
-    server_config = None
-
+    config = None
     protocol = None
 
     def setup(self):
-        print("##(MyTCPHandler.setup)")
-        self.protocol = ThreadedTCPServer.protocol_factory.create(self.send_bytes, self.request.close, self.client_address)
-
-    def handle(self):
-        # print("##(MyTCPHandler.handle) is_first:", self.is_first, self.server_config.port)
-        # if self.is_first:
-        #     self.request.sendall(b"Hello to client from server!")
-        #     self.is_first = False
-
-        current_thread = threading.current_thread()
-        while not ThreadedTCPHandler.abort:
-            print("## (MyTCPHandler.handle) New cycle. thread: {} client_address: {} request: {}".format(
-                current_thread.getName(), self.client_address, self.request))
-
-            print("##  (MyTCPHandler.handle) << Reading from client...")
-
-            # Read data
-            is_data = True
-            while is_data and self.server_config.COMMAND_END not in self.recv_buffer:
-                # print("##  (MyTCPHandler.handle)(temp) before-recv_buffer:", self.recv_buffer,
-                #       is_data, self.server_config.COMMAND_END not in self.recv_buffer)
-                try:
-                    data_bytes = self.request.recv(self.server_config.RECV_SIZE)
-                    is_data = bool(data_bytes)
-                    # print("##  (MyTCPHandler.handle)(temp) data:", data_bytes, is_data)
-                    print("##  <<< RECEIVE:", data_bytes, "length:", len(data_bytes))
-                    # data_str = data_bytes.decode("utf-8")
-                    # self.recv_buffer += data_str
-                    self.recv_buffer += data_bytes
-                except socket.error as error:
-                    print("##  (MyTCPHandler.handle) Client disconnected!", error)
-                    return
-
-            if not self.recv_buffer:
-                print("##No commands received. Possibly client suddenly disconnected!")
-                return
-
-            # Parse to command list
-            # (Note: without str() b'10||true||##\x01\x00' after split() -> '0x0010||true||##\x01\x00')
-            commands_data_list = self.recv_buffer.split(self.server_config.COMMAND_END)
-            # print("##temp", len(self.recv_buffer),len(commands_data_list),
-            #   self.server_config.COMMAND_END in self.recv_buffer)
-            last_item = commands_data_list.pop()
-            if last_item:
-                self.recv_buffer = last_item
-            else:
-                self.recv_buffer = b""
-            # print("##  (MyTCPHandler.handle) count,commands_data_list:", len(commands_data_list), commands_data_list)
-
-            # Process command list
-            try:
-                if self.protocol:
-                    self.protocol.process_commands(commands_data_list)
-            except socket.error as error:
-                print("##  (MyTCPHandler.handle) Client disconnected!", error)
-                return
-
-            print("##  (MyTCPHandler.handle) All commands processed.")
-
-    def send_bytes(self, data_bytes):
-        self.request.sendall(data_bytes + self.server_config.COMMAND_END)
+        threading.current_thread().name += "-srv-handler"
+        self.config = self.server.config
+        self.protocol = self.server.protocol_factory.create(self.send_bytes, self.request.close,
+                                                            self.client_address)
+        logging.debug("connectionMade for %s protocol: %s", self.client_address, self.protocol)
 
     def finish(self):
-        print("##(MyTCPHandler.finish)")
-        # ThreadedTCPServer.protocol_factory.remove(self.protocol)
+        logging.debug("connectionLost for %s", self.protocol)
         self.protocol.dispose()
-
-        self.server_config = None
         self.protocol = None
+        self.config = None
+
+    def send_bytes(self, data_bytes):
+        # logging.debug("sendData for %s line: %s", self.protocol, data_bytes)
+        self.request.sendall(data_bytes + self.config.DELIMITER)
+
+    def handle(self):
+        while not self.server.abort:
+            # Read
+            is_data = True
+            data_bytes = None
+            while not self.server.abort and is_data and self.config.DELIMITER not in self.buffer_bytes:
+                try:
+                    data_bytes = self.request.recv(self.config.RECV_SIZE)
+                    is_data = bool(data_bytes)
+                    self.buffer_bytes += data_bytes
+                except socket.error as error:
+                    # Note: current buffer won't be processed, but it usually empty in such cases
+                    logging.debug(" (connectionLost (abort) for %s reason: %s)", self.protocol, error)
+                    return
+
+            # Parse bytes
+            # b"command1##command2##\x00command3##\x00" -> [b"command1##command2##", b"command3##", b""]
+            # b"1||param||##5||param||##\x0010||param||##\x00" ->
+            #  [b"1||param||##5||param||##", b"10||param||##", b""]
+            if self.buffer_bytes:
+                # print("TEMP SERVER config:", self.server and self.config)
+                data_bytes_list = self.buffer_bytes.split(self.config.DELIMITER)
+                self.buffer_bytes = data_bytes_list.pop()
+
+                # Process
+                try:
+                    # (Try-except: because send method could be invoked during processing)
+                    if self.protocol and data_bytes_list:
+                        self.protocol.process_bytes_list(data_bytes_list)
+                # (Don't use socket.error because it causes StopIteration, which would not be caught)
+                # except socket.error as error:
+                except Exception as error:
+                    logging.debug(" (connectionLost for %s reason: %s)", self.protocol, error)
+                    return
+
+            if not data_bytes:
+                if not self.server.abort:
+                    reason = "(Empty data received: %s)" % data_bytes
+                    logging.debug(" (connectionLost for %s reason: %s)", self.protocol, reason)
+                return
+
+
+class ThreadedTCPServer(AbstractServer):
+    server = None
+
+    def __init__(self, config, app=None):
+        super().__init__(config, app)
+
+        self.started = False
+        self.__started_lock = threading.RLock()
+        self.__shutdown_event = threading.Event()
+        self.__shutdown_event.set()
+
+    # def dispose(self):
+    #     super().dispose()
+
+    def start(self):
+        if not self.config:
+            logging.error("Server is not initialized")
+            return
+        self.__started_lock.acquire()
+        if self.started:
+            logging.warning("Server is already running. address: %s", (self.config.host, self.config.port))
+            self.__started_lock.release()
+            return
+
+        # Create and start server
+        address = (self.config.host, self.config.port)
+        logging.debug("Server starting... address: %s", address)
+        self.started = True
+        self.__started_lock.release()
+        self.server = socketserver.ThreadingTCPServer(address, ThreadedTCPHandler)
+        self.server.protocol_factory = self.protocol_factory
+        self.server.config = self.config
+        self.server.abort = False
+        logging.debug("Server started")
+
+        self.__shutdown_event.clear()
+        try:
+            self.server.serve_forever()
+        except KeyboardInterrupt as error:
+            logging.info("^C KeyboardInterrupt", error)
+
+        # Here we shutting down the server
+        logging.debug("Server shutting down...")
+        # (Abort other threads)
+        self.server.abort = True
+        self.server.server_close()
+        self.server.protocol_factory = None
+        self.server.config = None
+        self.server = None
+        logging.debug("Server shut down")
+        self.__shutdown_event.set()
+
+        # print("Press Enter to exit...")
+        # input()
+        # # Needed to save lobby state using atexit.register() in app
+        # sys.exit()
+
+    def stop(self):
+        self.__started_lock.acquire()
+        if not self.started:
+            logging.warning("Server is not running. address: %s", (self.config.host, self.config.port))
+            self.__started_lock.release()
+            return
+
+        # Preventing
+        logging.debug("Server stopping... address: %s", (self.config.host, self.config.port))
+        self.started = False
+        self.__started_lock.release()
+        t = time.time()
+        self.server.shutdown()
+        self.__shutdown_event.wait()
+        logging.debug("Server stopped in %f sec (95%% of time is exiting from serve_forever())", time.time() - t)
 
 
 # Non-blocking
 
-class NonBlockingTCPServer:
+class NonBlockingTCPServer(AbstractServer):
+    _sock = None
 
-    def __init__(self, app):
-        if not app:
-            raise Exception("No app object given!")
-        self.server_config = app.lobby_model
+    def __init__(self, config, app=None):
+        super().__init__(config, app)
 
-        self.request_by_protocol = {}
-        self.buffer_by_protocol = {}
+        # (Needed for walking through all connections on each tick and receiving available data)
+        self._protocol_list = []
+        self._request_by_protocol = {}
+        self._buffer_by_protocol = {}
 
-        self.protocol_factory = ProtocolFactory(app, self.server_config.protocol_class)
-        self.protocol_list = []
-        self.abort = False
+        self._abort = False
+        self.started = False
+        self.__started_lock = threading.RLock()
+        self.__shutdown_event = threading.Event()
+        self.__shutdown_event.set()
 
     def start(self):
-        if not self.server_config:
+        if not self.config:
+            logging.warning("Server is not initialized")
+            return
+        address = (self.config.host, self.config.port)
+        logging.debug("Server starting... address: %s", address)
+        self.__started_lock.acquire()
+        if self.started:
+            logging.warning("Server is already running. address: %s", (self.config.host, self.config.port))
+            self.__started_lock.release()
             return
 
-        self.abort = False
+        self.started = True
+        self.__started_lock.release()
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        print("##(NonBlockingTCPServer.start) Start Server (NonBlocking, TCP)")
+        # (If restarting)
+        self._abort = False
 
-        address = (self.server_config.host, self.server_config.port)
-        max_conn_num = 10
-        print("##(NonBlockingTCPServer.start) Bind socket: %s max_conn_num: %i" % (address, max_conn_num))
-        sock.bind(address)
-        sock.listen(max_conn_num)
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
+        self._sock.bind(address)
+        self._sock.listen()
+        self._sock.setblocking(0)
+        logging.debug("Server started")
+
+        self.__shutdown_event.clear()
         try:
-            self.workflow(sock)
+            self._workflow(self._sock)
         except KeyboardInterrupt as error:
-            print("##(NonBlockingTCPServer.start) ^C KeyboardInterrupt", error)
+            logging.debug("^C KeyboardInterrupt %s", error)
 
-        # print("##(NonBlockingTCPServer.start) Close all %i connections" % (
-        #         self.protocol_factory.connection_count))
-        print("##(NonBlockingTCPServer.start) Close all connections")
-        self.protocol_factory.dispose()
-        for protocol in self.protocol_list:
-            protocol.dispose()
-        self.protocol_list.clear()
-
-        print("##(NonBlockingTCPServer.start) Shutdown server")
+        logging.debug("Server shutting down...")
+        # self._abort = True
         try:
-            sock.shutdown(socket.SHUT_RDWR)
+            self._sock.shutdown(socket.SHUT_RDWR)
         except socket.error as error:
-            print("##(NonBlockingTCPServer.start) Error while shutdowning!", error)
-        sock.close()
+            logging.error("Error while shutting down: %s", error)
+        self._sock.close()
+        self._sock = None
 
-        print("##(NonBlockingTCPServer.start) FINISH")
-        print("##(NonBlockingTCPServer.start) Press Enter to exit...")
-        input()
+        for protocol in self._protocol_list:
+            protocol.dispose()
+        self._protocol_list.clear()
+        self._request_by_protocol.clear()
+        self._buffer_by_protocol.clear()
+        logging.debug("Server shut down")
+        # logging.debug("Server stopped")
+        self.__shutdown_event.set()
 
-    def process_disconnect(self, protocol, error):
-        print("##(NonBlockingTCPServer.process_disconnect) Client disconnected!", error)
-        # self.protocol_factory.remove(protocol)
-        # print("##  (NonBlockingTCPServer.process_disconnect) Connections: %i" % (
-        #     self.protocol_factory.connection_count))
-        if protocol in self.request_by_protocol:
-            del self.request_by_protocol[protocol]
-        if protocol in self.buffer_by_protocol:
-            del self.buffer_by_protocol[protocol]
-        self.protocol_list.remove(protocol)
+        # (For standalone. Bad for tests)
+        # print("Press Enter to exit...")
+        # input()
+        # # Needed to save lobby state using atexit.register() in app
+        # sys.exit()
+
+    def stop(self):
+        logging.debug("Server stopping...")
+        self.__started_lock.acquire()
+        if not self.started:
+            logging.warning("Server is not running. address: %s", (self.config.host, self.config.port))
+            self.__started_lock.release()
+            return
+
+        # If was started, but yet is not stopping
+        self.started = False
+        self.__started_lock.release()
+        self._abort = True
+        self.__shutdown_event.wait()
+        logging.debug("Server stopped")
+
+    def _process_disconnect(self, protocol, error):
+        logging.debug("connectionLost for %s reason: %s", protocol, error)
         protocol.dispose()
+        self._protocol_list.remove(protocol)
+        if protocol in self._request_by_protocol:
+            del self._request_by_protocol[protocol]
+        if protocol in self._buffer_by_protocol:
+            del self._buffer_by_protocol[protocol]
 
-    def workflow(self, sock):
-        while not self.abort:
+    def _workflow(self, sock):
+        while not self._abort:
+            # print("SERVER. While...")
             # Connect
-            # print("##\nWaiting for client connection...")
-
-            sock.setblocking(0)
-            request = None
+            request, address = None, None
             try:
                 request, address = sock.accept()
-            except socket.error as error:
-                # print(error)
+            # socket.error (real error is [WinError 10035])
+            except Exception as error:
+                # print("accept error:", error)
+                # There is no new connections - skip
                 pass
             if request:
+                # New connection
                 def send_bytes(data_bytes):
-                    request.sendall(data_bytes + self.server_config.COMMAND_END)
+                    # logging.debug("sendData for %s line: %s", self.protocol, data_bytes)
+                    request.sendall(data_bytes + self.config.DELIMITER)
 
                 # Create protocol
                 protocol = self.protocol_factory.create(send_bytes, request.close, address)
-                self.request_by_protocol[protocol] = request
-                self.protocol_list.append(protocol)
-                print("##(NonBlockingTCPServer.workflow) Client accepted:", request, address)
-                # print("##  (NonBlockingTCPServer.workflow) Connections: %i" % (
-                #     self.protocol_factory.connection_count))
-                # # Send the first message
-                # print("##Send hello")
-                # request.send(b"Hello from server!")
+                logging.debug("connectionMade for %s protocol: %s", address, protocol)
+                self._protocol_list.append(protocol)
+                self._request_by_protocol[protocol] = request
 
-            for protocol in self.protocol_list:
-                # Client-server workflow
-                request = self.request_by_protocol[protocol]
-                # request = protocol.request
-                if not request:
-                    continue
+            # Walk through all connections looking for new data to receive
+            i = 0
+            for protocol in self._protocol_list:
+                i += 1
+                request = self._request_by_protocol[protocol]
 
-                # Read data
+                # Read
+                buffer_bytes = self._buffer_by_protocol.get(self, b"")
                 is_data = True
-
-                recv_buffer = self.buffer_by_protocol.get(self, b"")
-
+                data_bytes = None
                 while is_data:
                     try:
-                        data_bytes = request.recv(self.server_config.RECV_SIZE)
+                        data_bytes = request.recv(self.config.RECV_SIZE)
                         is_data = bool(data_bytes)
-                        # data_str = data_bytes.decode("utf-8")
-                        # recv_buffer += data_str
-                        recv_buffer += data_bytes
-                        # print(is_data, "|", data_bytes, "|", data_str, "|", recv_buffer,
-                        #       self.server_config.COMMAND_END not in recv_buffer)
-                    except socket.error as error:
+                        buffer_bytes += data_bytes
+                        # print("SERVER. recv data_bytes:", data_bytes, "buffer_bytes:", buffer_bytes)
+                    # socket.error
+                    except Exception as error:
                         # (break) is_data = False
-                        if error.errno != 10035:
-                            self.process_disconnect(protocol, error)
-                        # Process next connection for both disconnect and no recv data
+                        # print("SERVER. Error (recv)", error)
+                        if not hasattr(error, "errno") or error.errno != errno.EWOULDBLOCK:
+                            self._process_disconnect(protocol, error)
+                        # Process next connection for both disconnect and no data received now
                         break
+                    if not data_bytes:
+                        self._process_disconnect(protocol, "(Empty data received: %s)" % data_bytes)
 
-                if not recv_buffer:
+                if not buffer_bytes:
                     continue
 
-                print("##(NonBlockingTCPServer.workflow) Connection:", request)
+                # Parse bytes
+                data_bytes_list = buffer_bytes.split(self.config.DELIMITER)
+                self._buffer_by_protocol[self] = data_bytes_list.pop()
 
-                # Parse to command list
-                commands_data_list = recv_buffer.split(self.server_config.COMMAND_END)
-                # print("##  count,commands_data_list:", len(commands_data_list), commands_data_list, recv_buffer)
-                last_item = commands_data_list.pop()
-
-                recv_buffer = last_item
-                self.buffer_by_protocol[self] = recv_buffer
-
-                print("##  (NonBlockingTCPServer.workflow) Command list:", len(commands_data_list), commands_data_list)
-
-                # Process command list
+                # Process
                 try:
-                    if protocol:
-                        protocol.process_commands(commands_data_list)
-                except socket.error as error:
-                    self.process_disconnect(protocol, error)
-                    return
-
-                if commands_data_list:
-                    print("##  (NonBlockingTCPServer.workflow) All commands processed.")
+                    # (Try-except: because send method could be invoked during processing)
+                    if protocol and data_bytes_list:
+                        logging.debug("dataReceived for %s line: %s", protocol, buffer_bytes)
+                        protocol.process_bytes_list(data_bytes_list)
+                # socket.error
+                except Exception as error:
+                    self._process_disconnect(protocol, error)
+                    break

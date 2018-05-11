@@ -1,0 +1,21 @@
+{
+  "1": {
+    "_name_": "POKER"
+  },
+
+  "H": {
+    "_name_": "POKER_HOLDEM"
+  },
+  "OH": {
+    "_name_": "POKER_OMAHA_HILO"
+  },
+
+  "11": {
+    "_name_": "CASH_ANTE"
+  },
+  "40": {
+    "_name_": "TYPE_FAST",
+    "is_join_only_between_games": true,
+    "is_find_free_place_if_specified_one_taken": false
+  }
+}

@@ -11,3 +11,4 @@ The base functionality and protocol, which is common for all kind of such games,
 The code of each game also can be extracted to own separate library. As a result the custom application could contain only few line of code combining right libraries to working application. All game configs should be in external JSON files placed in 'server_data/' directory.
 
 Email: alex.panoptik [at] gmail.com
+

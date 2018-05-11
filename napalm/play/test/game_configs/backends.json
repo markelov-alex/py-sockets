@@ -1,0 +1,45 @@
+{
+  "default": "fb",
+
+  "temp": "for_test",
+  "for_test": {"some": "for_test_value"},
+  "test": {"app_secret": "my_secret"},
+
+  "fb": {
+    "domain": "fb.poker.com",
+    "secured": true,
+    "app_secret": "",
+    "napalm_secret": "myrandomforsocketserverSnJdG6dDZq6Os3i6iilo"
+  },
+  "fb_dev": {
+    "domain": "fb.dev.poker.com",
+    "secured": true,
+    "app_secret": "",
+    "napalm_secret": "myrandomforsocketserverSnJdG6dDZq6Os3i6iilo"
+  },
+  
+  "fb_local": {
+    "domain": "fb.poker.local",
+    "secured": true,
+    "app_secret": "5b84f30dd8735b25531dcb8a1f7c27b5",
+    "napalm_secret": "myrandomforsocketserverSnJdG6dDZq6Os3i6iilo"
+  },
+  "vk_local": {
+    "domain": "vk.poker.local",
+    "secured": true,
+    "app_secret": "PftmdquD4O1kjguwrfdQ",
+    "napalm_secret": "myrandomforsocketserverSnJdG6dDZq6Os3i6iilo"
+  },
+  "ok_local": {
+    "domain": "ok.poker.local",
+    "secured": true,
+    "app_secret": "E302FF7954528248F90F11A4",
+    "napalm_secret": "myrandomforsocketserverSnJdG6dDZq6Os3i6iilo"
+  },
+  "mm_local": {
+    "domain": "mm.poker.local",
+    "secured": true,
+    "app_secret": "1e684beb9584f24abcfda2d41a66eca7",
+    "napalm_secret": "myrandomforsocketserverSnJdG6dDZq6Os3i6iilo"
+  }
+}
