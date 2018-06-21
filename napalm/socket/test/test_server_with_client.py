@@ -213,11 +213,12 @@ class _BaseClientServerTest:
 
     def setUp(self):
         # super().setUp()
-        logging.debug("TEST SetUp")
+        # logging.debug("TEST SetUp")
+        pass
 
     def tearDown(self):
-        print("TEARDOWN", threading.current_thread())
-        logging.debug("TEST TearDown...")
+        # print("TEARDOWN", threading.current_thread())
+        # logging.debug("TEST TearDown...")
         # Dispose server and clients
         if self.server:
             self.server.stop()
@@ -272,21 +273,21 @@ class _BaseClientServerTest:
                 # if data_bytes == b"And you?":
                 if data_bytes == b"Hi!":
                     ClientProtocol.processed_count += 1
-                    print("  CLIENT CUSTOM on_process_bytes", ClientProtocol.processed_count, 1)
+                    # print("  CLIENT CUSTOM on_process_bytes", ClientProtocol.processed_count, 1)
                     if ClientProtocol.processed_count == 1:  # int(client_count / 2):
                         # (Restart needed only once)
                         ClientProtocol.on_process_bytes = None
-                        print("---RESTART-SERVER---" * 5)
-                        print("---=stopping...", threading.current_thread(), self, self.server)
+                        # print("---RESTART-SERVER---" * 5)
+                        # print("---=stopping...", threading.current_thread(), self, self.server)
                         self.server.stop()
-                        print("---=stopped")
+                        # print("---=stopped")
                         # (Continue processing data in protocol)
                         # server_stopped_event.set()
-                        print("---=start", self, self.server)
+                        # print("---=start", self, self.server)
                         # (Start server in main thread)
                         with self.condition:
                             self.condition.notify()
-                        print("   ---RESTART-SERVER---" * 5)
+                        # print("   ---RESTART-SERVER---" * 5)
 
             ClientProtocol.processed_count = 0
             ClientProtocol.on_process_bytes = on_process_bytes
@@ -323,8 +324,8 @@ class _BaseClientServerTest:
             # self.condition.wait_for(predicate, timeout=timeout)
 
         self.assertGreater(len(self.clients), 0)
-        print("ASSERT clients count:", len(self.clients))
-        print("ASSERTING...", threading.current_thread())
+        # print("ASSERT clients count:", len(self.clients))
+        # print("ASSERTING...", threading.current_thread())
         for protocol in ClientProtocol.protocols_total:
             self.assertEqual(protocol.sent_history, [b"Hello", b"How are you?", b"I'm OK.", b"Good bye!"])
             self.assertEqual(protocol.received_history, [b"Hi!", b"I'm fine, thank you.", b"And you?", b"Bye!"])
@@ -336,10 +337,10 @@ class _BaseClientServerTest:
         # ("greater" - needed for restart tests)
         self.assertGreaterEqual(ServerProtocol.protocol_created_count, client_count)
         # Ensure
-        print("  ASSERTING...", threading.current_thread())
+        # print("  ASSERTING...", threading.current_thread())
         self.assertEqual(ClientProtocol.protocol_current_count, 0)
         self.assertGreaterEqual(ClientProtocol.protocol_created_count, client_count)
-        print("ASSERTED", threading.current_thread())
+        # print("ASSERTED", threading.current_thread())
 
         # # move to test_client.py
         # def test_client_without_protocol(self):

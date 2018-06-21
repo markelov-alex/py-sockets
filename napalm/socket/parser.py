@@ -36,7 +36,7 @@ class CommandParser:
         if not room_code:
             return -1, -1, -1, -1
 
-        room_code_array = room_code.split("_")
+        room_code_array = str(room_code).split("_")
         items_count = len(room_code_array)
         # Poker/Monopoly/Hockey
         game_id = int(room_code_array[0]) if items_count > 0 and room_code_array[0] else -1
@@ -49,6 +49,16 @@ class CommandParser:
         # Public/VIP/Private
         room_type = int(room_code_array[3]) if items_count > 3 and room_code_array[3] else -1
         return game_id, game_variation, game_type, room_type
+
+    @staticmethod
+    def make_room_code(game_id=None, game_variation=None, game_type=None, room_type=None):
+        items = [game_id, game_variation, game_type, room_type]
+        for item in reversed(items):
+            if item is not None:
+                break
+            items.pop()
+        room_code = "_".join([str(item) if item is not None else "" for item in items])
+        return room_code
 
     def split_commands(self, commands_data):
         return commands_data.split(self.COMMAND_DELIM)

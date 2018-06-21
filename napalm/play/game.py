@@ -1,5 +1,8 @@
 import logging
 
+import time
+
+from napalm.async import AbstractTimer
 from napalm.core import ExportableMixIn, ReloadableMultiModel
 from napalm.play.protocol import MessageCode
 
@@ -15,7 +18,7 @@ class GameConfigModel(ReloadableMultiModel):
     is_find_free_place_if_specified_one_taken = True
     # (True for games like Monopoly, False - for Poker)
     is_join_only_between_games = False
-    is_start_tournament_only_if_full = False
+    is_start_tournament_only_if_full = True
     # (True for Poker, False - for Monopoly)
     is_reset_on_game_finish = True
     # (If greater than max_player_count, the latter will be used instead)
@@ -26,16 +29,17 @@ class GameConfigModel(ReloadableMultiModel):
     kick_off_after_sit_out_games_count = 2
     is_divide_same_pot_simultaneously = True
 
-    raise_step = 1
+    bet_step = 1
 
     # Override
     @property
     def _config_property_names(self):
+        # Note: game_config_model should not have id
         return ["is_find_free_place_if_specified_one_taken",
                 "is_join_only_between_games", "is_reset_on_game_finish", "min_players_to_start",
                 "is_sit_out_enabled", "is_sit_out_after_missed_turn",
                 "kick_off_after_missed_turns_count", "kick_off_after_sit_out_games_count",
-                "raise_step"]
+                "bet_step"]
 
 
 # Game
@@ -87,6 +91,10 @@ class GamePlayerManagerMixIn:
     def can_be_added(self, player, place_index=-1, money_in_play=0):
         """Can be used in lobby to avoid joining the room where you couldn't play"""
 
+        # Check already added and is restoring now
+        if player.place_index >= 0:
+            return True
+
         # Check place
         if place_index >= 0 and place_index in self._player_by_place_index and \
                 not self.game_config_model.is_find_free_place_if_specified_one_taken:
@@ -100,8 +108,10 @@ class GamePlayerManagerMixIn:
             return False
 
         # Check max_player_count
-        return self.max_player_count < 0 or len(self.player_list) < self.max_player_count
+        result = self.max_player_count < 0 or len(self.player_list) < self.max_player_count
+        return result
 
+    # (todo in future: use room.join_the_room/game, not room/game.add_player; lobby.join... acts only as a proxy)
     def add_player(self, player, place_index=-1, money_in_play=0):
         """
         Used for:
@@ -138,19 +148,25 @@ class GamePlayerManagerMixIn:
             self._on_add_player(player)
             return True
 
+        # (If restoring player in game)
+        if place_index < 0:
+            place_index = player.place_index
+        # --- if not money_in_play and player.money_in_play:
+        #     money_in_play = player.money_in_play
+
         if not self.can_be_added(player, place_index, money_in_play):
-            self.logging.warning("G WARNING! (add_player) Cannot add player. There is no free place in the play. "
-                                 "max_player_count: %s len(player_list): %s", self.max_player_count,
-                                 len(self.player_list))
+            self.logging.warning("G WARNING! (add_player) Player can not be added. %s "
+                                 "max_player_count: %s len(player_list): %s",
+                                 player, self.max_player_count, len(self.player_list))
             player.protocol.show_ok_message_dialog(MessageCode.JOIN_GAME_FAIL_TITLE, MessageCode.JOIN_GAME_FAIL)
             return False
 
         if place_index < 0 or (place_index in self._player_by_place_index and
                                self.game_config_model.is_find_free_place_if_specified_one_taken):
-            place_index = self._find_free_place_index()
-        if place_index < 0:
-            self.logging.warning("G WARNING! (play.add_player) Cannot add player. "
-                                 "The chosen place is not free place_index: %s len(player_list): %s",
+            place_index = self._find_free_place_index(place_index)
+        if place_index < 0 or place_index in self._player_by_place_index:
+            self.logging.warning("G WARNING! (game.add_player) Cannot add player. "
+                                 "The chosen place is not free. place_index: %s len(player_list): %s",
                                  place_index, len(self.player_list))
             return False
 
@@ -169,6 +185,7 @@ class GamePlayerManagerMixIn:
         # self.logging.debug("G BEFORE sort player_list: %s", self.player_list)
         self.player_list.sort(key=lambda p: p.place_index)
         # self.logging.debug("G     AFTER sort player_list: %s", self.player_list)
+        self.room_model.playing_count = len(self.player_list)
 
         self.room.send_player_joined_the_game(player)
         log_text = " ".join((player.first_name, player.last_name, "joined the game"))
@@ -207,7 +224,7 @@ class GamePlayerManagerMixIn:
 
         player.game = None
         player.place_index = -1
-        player.playing = False
+        player.is_playing = False
 
         player.remove_money_in_play()
         # player.protocol.update_self_user_info(player.export_public_data())
@@ -220,7 +237,8 @@ class GamePlayerManagerMixIn:
         return True
 
     def _remove_all_players(self):
-        for player in self.player_list:
+        # (list() makes a copy to iterate through while items removing)
+        for player in list(self.player_list):
             self.remove_player(player)
 
     def _remove_all_players_from_room(self):
@@ -236,13 +254,21 @@ class GamePlayerManagerMixIn:
     def _on_remove_player(self, player):
         pass
 
-    def _find_free_place_index(self):
-        # For infinite max_player_count
-        if self.max_player_count < 0:
-            index = 0
-            while index in self._player_by_place_index:
-                index += 1
-            return index
+    def _find_free_place_index(self, start_index=-1):
+        if not self.max_player_count:
+            return -1
+
+        start_index = max(0, start_index)
+        if self.max_player_count > 0:
+            start_index = start_index % self.max_player_count
+        index = start_index if self.max_player_count > 0 else 0
+        while index in self._player_by_place_index:
+            index += 1
+            if index >= self.max_player_count:
+                index = 0
+            if index == start_index:
+                return -1
+        return index
 
         # For fixed max_player_count
         for index in range(0, self.max_player_count):
@@ -252,26 +278,34 @@ class GamePlayerManagerMixIn:
         # No free place for fixed max_player_count
         return -1
 
-    def _find_nearest_player_to(self, start_index, is_check_playing=True, is_money_in_play=True):
-        # Returns start_index or next index of place with player
+    def _find_nearest_right_hand_player_to(self, start_index, check_is_playing=True):  # , is_check_playing=True, is_money_in_play=True):
+        """Returns start_index or next index of place with player"""
+        # -start_index = max([0, min([start_index, self.max_player_count - 1])])
+        if start_index >= self.max_player_count or start_index < 0:
+            start_index = 0
         index = start_index
 
-        # self.logging.debug("G temp (_find_nearest_player_to) start_index: %s checks: %s %s "
+        # self.logging.debug("G temp (_find_nearest_right_hand_player_to) start_index: %s checks: %s %s "
         #                    "self._player_by_place_index: %s", start_index, is_check_playing, is_money_in_play,
         #                    self._player_by_place_index)
+        # while index not in self._player_by_place_index or \
+        #         (is_check_playing and not self._player_by_place_index[index].is_playing) or \
+        #         (is_money_in_play and self._player_by_place_index[index].money_in_play <= 0):
         while index not in self._player_by_place_index or \
-                (is_check_playing and not self._player_by_place_index[index].is_playing) or \
-                (is_money_in_play and self._player_by_place_index[index].money_in_play <= 0):
+                (check_is_playing and not self._player_by_place_index[index].is_playing) or \
+                self._player_by_place_index[index].money_in_play <= 0 or \
+                self._player_by_place_index[index].is_sit_out:
             index += 1
             if index >= self.max_player_count:
-                # self.logging.debug("G temp  (_find_nearest_player_to) index >= self.max_player_count set-index=0. "
+                # self.logging.debug("G temp  (_find_nearest_right_hand_player_to) index >= self.max_player_count set-index=0. "
                 #                    "index: %s self.max_player_count: %s", index, self.max_player_count)
                 index = 0
             if index == start_index:
-                # self.logging.debug("G temp  (_find_nearest_player_to) index == start_index break")
-                break  # return -1
+                # self.logging.debug("G temp  (_find_nearest_right_hand_player_to) index == start_index break")
+                return -1
+                # break
 
-        # self.logging.debug("G temp  (_find_nearest_player_to) result index: %s", index)
+        # self.logging.debug("G temp  (_find_nearest_right_hand_player_to) result index: %s", index)
         return index
 
 
@@ -310,15 +344,18 @@ class Game(GamePlayerManagerMixIn, ExportableMixIn):
     # State
 
     @property
+    def is_in_progress(self):
+        return self._is_in_progress
+
+    @property
     def is_paused(self):
         return self._is_paused or self._is_resuming_pause
 
     @property
     def _start_countdown_sec(self):
-        min_player_count = self.game_config_model.min_players_to_start
         player_count = len(self.player_list)
 
-        if min_player_count < player_count:
+        if player_count < self.game_config_model.min_players_to_start:
             return -1
         all_ready = player_count == len(self._ready_to_start_players)
         start_countdown_sec = self.room_model.start_game_countdown_sec \
@@ -330,7 +367,8 @@ class Game(GamePlayerManagerMixIn, ExportableMixIn):
     def _is_game_can_be_started(self):
         # ?min_players_to_start = min(self.game_config_model.min_players_to_start, self.max_player_count)
         min_players_to_start = self.game_config_model.min_players_to_start
-        return not self._is_in_progress and len(self._available_player_list) >= min_players_to_start
+        return not self._is_in_progress and not self._is_showing_winners and \
+               len(self._available_player_list) >= min_players_to_start
 
     @property
     def _available_player_list(self):
@@ -355,6 +393,7 @@ class Game(GamePlayerManagerMixIn, ExportableMixIn):
         # State
         # todo replace with self._is_in_progress = False
         self._is_in_progress = False
+        self._is_showing_winners = False
         self._is_paused = False
         self._is_resuming_pause = False
 
@@ -362,25 +401,54 @@ class Game(GamePlayerManagerMixIn, ExportableMixIn):
         ExportableMixIn.__init__(self)
 
     def dispose(self):
-        self.logging.debug("G (dispose)", self)
-        self._reset_game()
+        if self.logging:
+            self.logging.debug("G (dispose) %s", self)
+        self._return_bets()
+
+        self._is_in_progress = False
+        # To stop all timers
+        # self._reset_game()
+        if self.room_model:  # Some properties got by getattr() fail without models after dispose() was called
+            for attr in dir(self):
+                value = getattr(self, attr)
+                if isinstance(value, AbstractTimer):
+                    value.dispose()
+
+        # Remove all players first
+        GamePlayerManagerMixIn.dispose(self)
+
+        # (list() needed to make a copy - just a best practice)
+        for timer in list(self._rebuying_timers):
+            timer.dispose()
+        self._rebuying_timers.clear()
 
         self.room = None
         self.house_config = None
         self.room_model = None
         self.game_config_model = None
 
-        GamePlayerManagerMixIn.dispose(self)
-
-        self.logging = None
+        # self.logging = None
 
     def __repr__(self):
+        if not self.room_model:
+            return super().__repr__()
         return "<{0} room_id:{1} room_name:{2} place_count:{3} player_count:{4}>".format(
             self.__class__.__name__, self.room_model.room_id, self.room_model.room_name,
             len(self.player_by_place_index_list), len(self.player_list))
 
     def export_public_data_for(self, for_place_index=-1):
         return self.export_public_data()
+
+    # todo unittests
+    def check_and_apply_changes(self):
+        # Can be applied only between games
+        if not self._is_in_progress and self.game_config_model \
+                and self.game_config_model.is_changed:
+            # Apply
+            self.game_config_model.apply_changes()
+            # -# Inform about
+            # for player in self.room.player_set:
+            #     self.room.get_game_info(player)
 
     # Start
 
@@ -395,14 +463,15 @@ class Game(GamePlayerManagerMixIn, ExportableMixIn):
     def _on_remove_player(self, player):
         super()._on_remove_player(player)
 
-        self._refresh_starting_game(player)
-
-        self._check_end_game()
+        # - Wrong behavior; cause starting game on dispose
+        # self._refresh_starting_game(player)
+        # -? (_on_remove_player() called before player removed)
+        # self._check_end_game()
 
     def ready_to_start(self, player, is_ready=True):
         """Called on player pressed "Ready" button"""
         # Restart play if it've been finished by now and all players wish to restart
-        if not self._is_in_progress:
+        if not self._is_in_progress and not self._is_showing_winners:
             # Add/remove
             if is_ready and player not in self._ready_to_start_players:
                 self._ready_to_start_players.append(player)
@@ -418,7 +487,7 @@ class Game(GamePlayerManagerMixIn, ExportableMixIn):
                                  "not finished yet). is_in_progress: %s", self._is_in_progress)
 
     def _refresh_starting_game(self, changed_player=None):
-        if self._is_in_progress:
+        if self._is_in_progress or self._is_showing_winners:
             return
 
         self._check_start_game()
@@ -436,10 +505,12 @@ class Game(GamePlayerManagerMixIn, ExportableMixIn):
 
         # Check min_players_to_start
         if self._is_game_can_be_started:
-            if self._start_countdown_sec <= 0:
+            start_countdown_sec = self._start_countdown_sec
+            # print("Start game", ("after %f sec" % start_countdown_sec) if start_countdown_sec > 0 else "")
+            if start_countdown_sec <= 0:
                 self._start_game()
             else:
-                self._start_game_timer.restart(self._start_game, self._start_countdown_sec)
+                self._start_game_timer.restart(self._start_game, start_countdown_sec)
             return True
 
         # (For example, some players went out before start_game_timer complete)
@@ -450,7 +521,7 @@ class Game(GamePlayerManagerMixIn, ExportableMixIn):
 
     def _start_game(self):
         """Template method. Called only once per game."""
-        if self._is_in_progress:
+        if self._is_in_progress or self._is_showing_winners:
             return
 
         self._reset_game()
@@ -464,9 +535,11 @@ class Game(GamePlayerManagerMixIn, ExportableMixIn):
                     playing_count += 1
 
         # Check it's enough available players to start game
-        if playing_count >= self.game_config_model.min_players_to_start:
+        if playing_count < self.game_config_model.min_players_to_start:
+            # todo check: player_list or available_player_list
             for player in self.player_list:
                 player.is_playing = False
+            # self.logging.debug("Not enough available players to start the game")
             return
 
         # Start
@@ -492,14 +565,24 @@ class Game(GamePlayerManagerMixIn, ExportableMixIn):
         self._game_timer.reset()
         self._show_game_winner_timer.reset()
 
+        self._is_showing_winners = False
+        self._is_paused = False
+        self._is_resuming_pause = False
+
         # (Reset all play params here)
         self._ready_to_start_players.clear()
 
         for player in self.player_list:
             player.reset_game_state()
 
+        # todo add to unittests
+        if self.room:
+            self.room.check_and_apply_changes()
+        self.check_and_apply_changes()
+
         # Send
-        self.room.send_reset_game()
+        if self.room:
+            self.room.send_reset_game()
 
     # Pause/resume
 
@@ -583,6 +666,7 @@ class Game(GamePlayerManagerMixIn, ExportableMixIn):
 
         # self.logging.debug("G temp (_end_game) process_rounds_to_end: %s", process_rounds_to_end)
         # (Should be false to disable all player actions and enable showing and mucking cards, etc)
+        self._is_showing_winners = True  # todo add unittests
         self._is_in_progress = False
 
         self._find_game_winners(self._on_end_game)
@@ -599,12 +683,21 @@ class Game(GamePlayerManagerMixIn, ExportableMixIn):
     def _on_end_game(self):
         # Check enough money_in_play to continue
         for player in self.player_list:
-            # Kick off disconnected players from play
             if player.money_in_play <= 0:
                 self._player_no_money_in_play(player)
 
-        if not self._check_start_game() and self.game_config_model.is_reset_on_game_finish:
+        self._is_showing_winners = False  # todo add unittests
+
+        # Try to start new game
+        is_new_game_started = self._check_start_game()
+
+        # (Reset on game finish while waiting for new game)
+        if not is_new_game_started and self.game_config_model.is_reset_on_game_finish:
             self._reset_game()
+
+    def _return_bets(self):
+        """Return all pots to the bidders to terminate the game urgently"""
+        pass
 
     # Send
 
@@ -618,23 +711,33 @@ class Game(GamePlayerManagerMixIn, ExportableMixIn):
         # Then rejoin the play with money added
         player.protocol.show_cashbox_dialog()
 
-        # Start show_game_winner_timer to free place on timeout
-        def rebuy_timeout():
-            # Leave the game
-            if player.money_in_play <= 0:
-                self.remove_player(player)
-            self._rebuying_timers.remove(rebuying_timer)
-
-        rebuying_timer = self.create_timer(rebuy_timeout, self.room_model.hold_place_while_rebuying_for_sec)
+        rebuying_timer = self.create_timer(self.rebuy_timeout, self.room_model.rebuying_sec)
+        rebuying_timer.args = [rebuying_timer, player]
         self._rebuying_timers.append(rebuying_timer)
+        rebuying_timer.start()
+
+    # Start show_game_winner_timer to free place on timeout
+    def rebuy_timeout(self, rebuying_timer, player):
+        # Leave the game
+        if player.money_in_play <= 0:
+            self.remove_player(player)
+        self._rebuying_timers.remove(rebuying_timer)
 
     def get_player_info(self, asking_player, place_index):
-        if place_index in self._player_by_place_index:
-            player = self._player_by_place_index[place_index]
+        # ? Which behavior is better?
+        # player = self._player_by_place_index[place_index] if place_index in self._player_by_place_index else None
+        # asking_player.protocol.player_info(place_index, player.export_public_data() if player else None)
+        #
+        # if place_index in self._player_by_place_index:
+        #     player = self._player_by_place_index[place_index]
+        #     asking_player.protocol.player_info(place_index, player.export_public_data() if player else None)
+        #
+        if place_index in range(self.max_player_count):
+            player = self._player_by_place_index[place_index] if place_index in self._player_by_place_index else None
             asking_player.protocol.player_info(place_index, player.export_public_data() if player else None)
 
     def get_all_player_info(self, asking_player):
-        for place_index, player in self._player_by_place_index.items():
+        for place_index, player in enumerate(self._player_by_place_index_list):
             # ? if player != asking_player:
             asking_player.protocol.player_info(place_index, player.export_public_data() if player else None)
 
@@ -652,6 +755,6 @@ class Game(GamePlayerManagerMixIn, ExportableMixIn):
 
     # Utility
 
-    def create_timer(self, callback=None, delay_sec=0, name=None):
-        timer = self.house_config.timer_class(callback, delay_sec, 1, name=name)
+    def create_timer(self, callback=None, delay_sec=0, args=None, name=None):
+        timer = self.house_config.timer_class(callback, delay_sec, 1, args, name=name) if self.house_config else None
         return timer

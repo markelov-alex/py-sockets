@@ -16,11 +16,7 @@
         "room_name": "1_room2",
         "room_code": "2_B_10_0",
         "tournament_type": 0,
-        "game_params": [50, 100, 0, 100000],
-
-        "waiting_for_other_players_countdown_sec": 15,
-        "start_game_countdown_sec": 3,
-        "game_timeout_sec": 1200
+        "game_params": [50, 100, 0, 100000]
       },
       {
         "base": "holdem_50_100",

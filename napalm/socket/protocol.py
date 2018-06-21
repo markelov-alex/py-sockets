@@ -64,7 +64,7 @@ class SimpleProtocol:
             self.on_disconnect()
 
             self.logging.debug("Protocol disposed (%s)", address)
-        self.logging = None
+        # self.logging = None
 
     # Send
 
@@ -185,7 +185,8 @@ class Protocol(SimpleProtocol):
         self.flush()
 
         if self.plugins:
-            for plugin in self.plugins:
+            # (list() needed to make a copy)
+            for plugin in list(self.plugins):
                 plugin.dispose()
             self.plugins.clear()
 

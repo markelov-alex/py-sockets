@@ -11,7 +11,13 @@
       {
         "base": "holdem_25_50",
         "room_id": 1,
-        "room_name": "1_room1"
+        "room_name": "1_room1",
+
+        "start_game_countdown_sec": -1,
+        "waiting_for_other_players_countdown_sec": -1,
+        "apply_round_delay_sec": -1,
+        "between_rounds_delay_sec": -1,
+        "turn_timeout_sec": -1
       },
       [
         2,
@@ -29,7 +35,7 @@
         -1
       ],
       [
-        null,
+        3,
         "1_room3",
         "1_H_10_0",
         [
@@ -46,7 +52,11 @@
         "-comment-": "Overwrites previous which lies on 4-th index and has lobby_id=4, but apply_changes() needed!!!",
         "base": "holdem_25_50",
         "room_id": 4,
-        "room_name": "1_room4"
+        "room_name": "1_room4",
+
+        "waiting_for_other_players_countdown_sec": 15,
+        "start_game_countdown_sec": 3,
+        "game_timeout_sec": 1200
       }
     ]
   },

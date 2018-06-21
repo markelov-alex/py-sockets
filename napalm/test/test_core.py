@@ -461,6 +461,9 @@ class TestReloadableModel(TestCase):
         super().tearDown()
         MyReloadableModel.is_change_on_command = False
         MyReloadableModel.dispose_models()
+        # ReloadableModel.dispose_models()
+        self.assertIsNone(MyReloadableModel.model_class)
+        # MyReloadableModel.model_class = None
 
     # Class/Static
 
@@ -512,12 +515,26 @@ class TestReloadableModel(TestCase):
         self.assertIsNotNone(MyReloadableModel._info_by_id)
         self.assertEqual(len(MyReloadableModel.model_list), 4)
         self.assertEqual(len(MyReloadableModel.model_by_id), 4)
+        ReloadableModel.model_class = 1
+        MyReloadableModel.model_class = 2
 
         MyReloadableModel.dispose_models()
 
         self.assertIsNone(MyReloadableModel._info_by_id)
         self.assertIsNone(MyReloadableModel.model_list)
         self.assertIsNone(MyReloadableModel.model_by_id)
+        self.assertIsNone(MyReloadableModel.model_class)
+        self.assertEqual(ReloadableModel.model_class, 1)
+        ReloadableModel.model_class = None
+
+    def test_create_model(self):
+        self.assertEqual(ReloadableModel.model_class, None)
+
+        self.assertIsInstance(ReloadableModel.create_model(None), ReloadableModel)
+
+        ReloadableModel.model_class = MyReloadableModel
+
+        self.assertIsInstance(ReloadableModel.create_model(None), MyReloadableModel)
 
     def test_prepare_info_data(self):
         input = None
@@ -544,6 +561,34 @@ class TestReloadableModel(TestCase):
         expected = {"3": 0, "u": "a", "5": [1, 2], "7": {"b": 4}}
 
         self.assertEqual(ReloadableModel.prepare_info_data(input), expected)
+
+        input = 100
+        expected = {"0": 100}
+
+        self.assertEqual(ReloadableModel.prepare_info_data(input), expected)
+
+        input = "100"
+        expected = {"0": "100"}
+
+        self.assertEqual(ReloadableModel.prepare_info_data(input), expected)
+
+    def test_update_model_list_with_default_id_name(self):
+        temp = MyReloadableModel.id_name
+        MyReloadableModel.id_name = ReloadableModel.id_name
+        self.assertEqual(MyReloadableModel.id_name, "id")
+
+        info_data_dict = {"any": {"id": 2, "param1": "value1_2", "param4": "value4_2"}}
+        MyReloadableModel.on_configs_reloaded(info_data_dict)
+        model_list = []
+        model_by_id = {}
+
+        MyReloadableModel.update_model_list(model_list, model_by_id, info_data_dict,
+                                            MySubReloadableModel)
+
+        expected = {"id": "2", "param1": "value1_2", "param2": None, "param3": None}
+        self.assert_model_matches(model_list[0], expected)
+
+        MyReloadableModel.id_name = temp
 
     def test_update_model_list_not_using_copies(self):
         MyReloadableModel.on_configs_reloaded(self.info_data_dict)
@@ -668,12 +713,12 @@ class TestReloadableModel(TestCase):
         self.assertTrue(model.is_available)
 
         # is_marked_deleted
+        model.is_marked_for_delete = False
         model.is_marked_deleted = True
 
         self.assertFalse(model.is_available)
 
         MyReloadableModel.is_available_if_deleting = False
-        model.is_marked_for_delete = False
 
         self.assertFalse(model.is_available)
 
@@ -745,7 +790,7 @@ class TestReloadableModel(TestCase):
         MyReloadableModel.on_configs_reloaded({0: [None, "value1_0"]})
         model = MyReloadableModel.get_model_by_id("0")
         model_copy = MyReloadableModel.get_model_copy_by_id("0")
-        model.dispose = Mock()
+        model.dispose = Mock(side_effect=model.dispose)
 
         # Ensure
         self.assertEqual(model_copy.parent_model, model)
@@ -762,7 +807,7 @@ class TestReloadableModel(TestCase):
         MyReloadableModel.on_configs_reloaded({0: [None, "value1_0"]})
         model = MyReloadableModel.get_model_by_id("0")
         model_copy = MyReloadableModel.get_model_copy_by_id("0")
-        # model_copy.dispose = Mock()
+        # model_copy.dispose = Mock(side_effect=model_copy.dispose)
 
         # Ensure
         self.assertEqual(model_copy.parent_model, model)
@@ -856,10 +901,11 @@ class MyReloadableMultiModel(ReloadableMultiModel):
     param2 = "02"
     param3 = "03"
     param4 = "04"
+    param5 = "05"
 
     @property
     def _config_property_names(self):
-        return ["id", "param1", "param2", "param3", "param4"]
+        return ["id", "param1", "param2", "param3", "param4", "param5"]
 
 
 class TestReloadableMultiModel(TestCase):
@@ -879,13 +925,22 @@ class TestReloadableMultiModel(TestCase):
         MyReloadableMultiModel.is_change_on_command = False
         MyReloadableMultiModel.use_copies_for_sub_models = True
 
-    def test_get_model_by_id(self):
+    def test_create_multimodel_by_ids(self):
         model = MyReloadableMultiModel.create_multimodel_by_ids([0, 1, 2, 5])
 
         self.assertIsInstance(model, MyReloadableMultiModel)
         self.assertEqual(model.ids, [0, 1, 2, 5])
         self.assertEqual(len(model._sub_models), 3)
-        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, []])
+        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, "05", []])
+
+        model = ReloadableMultiModel.create_multimodel_by_ids([])
+
+        self.assertIsInstance(model, ReloadableMultiModel)
+
+        ReloadableMultiModel.model_class = MyReloadableMultiModel
+        model = ReloadableMultiModel.create_multimodel_by_ids(None)
+
+        self.assertIsInstance(model, MyReloadableMultiModel)
 
     def test_id(self):
         model = MyReloadableMultiModel.create_multimodel_by_ids([0, 1, 2, 5])
@@ -1005,14 +1060,14 @@ class TestReloadableMultiModel(TestCase):
 
         self.assertFalse(model.is_changed)
         self.assertEqual(model.ids, [2, 1])
-        self.assertEqual(model.export_data(), [None, "01", 22, 3, 4, []])  # changes applied at once
+        self.assertEqual(model.export_data(), [None, "01", 22, 3, 4, "05", []])  # changes applied at once
 
         # Set empty - don't affect properties
         model.ids = []
 
         self.assertEqual(model.ids, [])
         self.assertEqual(model._sub_models, [])
-        self.assertEqual(model.export_data(), [None, "01", 22, 3, 4, []])  # no changes
+        self.assertEqual(model.export_data(), [None, "01", 22, 3, 4, "05", []])  # no changes
 
         # Set None
         model.ids = [2, 1]
@@ -1022,7 +1077,7 @@ class TestReloadableMultiModel(TestCase):
 
         self.assertEqual(model.ids, None)
         self.assertEqual(model._sub_models, [])
-        self.assertEqual(model.export_data(), [None, "01", 22, 3, 4, []])  # no changes
+        self.assertEqual(model.export_data(), [None, "01", 22, 3, 4, "05", []])  # no changes
 
         # is_change_on_command
         model.is_change_on_command = True
@@ -1030,13 +1085,13 @@ class TestReloadableMultiModel(TestCase):
 
         self.assertTrue(model.is_changed)
         self.assertEqual(model.ids, [1, 2, 0])
-        self.assertEqual(model.export_data(), [None, "01", 22, 3, 4, []])  # no changes
+        self.assertEqual(model.export_data(), [None, "01", 22, 3, 4, "05", []])  # no changes
 
         model.apply_changes()
 
         self.assertFalse(model.is_changed)
         self.assertEqual(model.ids, [1, 2, 0])
-        self.assertEqual(model.export_data(), [None, 1, 2, 33, 4, []])  # changes applied
+        self.assertEqual(model.export_data(), [None, 1, 2, 33, 4, "05", []])  # changes applied
 
         # Same ids - ignore
         model.ids = [1, 2, 0]
@@ -1068,14 +1123,14 @@ class TestReloadableMultiModel(TestCase):
         self.assertEqual(model.ids, None)
         self.assertEqual(model._sub_models, [])
         self.assertEqual(model._initial_config, None)
-        self.assertEqual(model.export_data(), [None, "01", "02", "03", "04", []])
+        self.assertEqual(model.export_data(), [None, "01", "02", "03", "04", "05", []])
 
         # Wrong sub_model ids
         model = MyReloadableMultiModel(ids=["55", 77])
 
         self.assertEqual(model.ids, ["55", 77])
         self.assertEqual(model._sub_models, [])
-        self.assertEqual(model.export_data(), [None, "01", "02", "03", "04", []])
+        self.assertEqual(model.export_data(), [None, "01", "02", "03", "04", "05", []])
 
         # Three valid and one wrong sub_model id
         model = MyReloadableMultiModel(ids=[0, "1", 2, 5])
@@ -1083,7 +1138,7 @@ class TestReloadableMultiModel(TestCase):
         self.assertFalse(model.is_changed)
         self.assertEqual(model.ids, [0, "1", 2, 5])
         self.assertEqual([sub_model.id for sub_model in model._sub_models], ["0", "1", "2"])
-        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, []])
+        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, "05", []])
 
         # is_change_on_command
         MyReloadableMultiModel.is_change_on_command = True
@@ -1092,25 +1147,25 @@ class TestReloadableMultiModel(TestCase):
         self.assertFalse(model.is_changed)
         self.assertEqual(model.ids, [0, "1", 2, 5])
         self.assertEqual([sub_model.id for sub_model in model._sub_models], ["0", "1", "2"])
-        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, []])
+        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, "05", []])
 
     def test_dispose(self):
         model = MyReloadableMultiModel.create_multimodel_by_ids([0, "1", 2, 5])
         self.assertFalse(model.is_changed)
         self.assertEqual(model.ids, [0, "1", 2, 5])
         self.assertEqual([sub_model.id for sub_model in model._sub_models], ["0", "1", "2"])
-        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, []])
+        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, "05", []])
 
         model.dispose()
 
         self.assertFalse(model.is_changed)
         self.assertEqual(model.ids, None)
         self.assertEqual(model._sub_models, [])
-        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, []])  # not changed
+        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, "05", []])  # not changed
 
         model.reset()
 
-        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, []])  # not changed
+        self.assertEqual(model.export_data(), [None, "01", "02", "03", "04", "05", []])
 
     def test_apply_changes(self):
         self.assertFalse(MyReloadableMultiModel.is_change_on_command)
@@ -1119,43 +1174,43 @@ class TestReloadableMultiModel(TestCase):
         model = MyReloadableMultiModel.create_multimodel_by_ids([0, 1, 2, 5])
 
         self.assertFalse(model.is_changed)
-        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, []])
+        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, "05", []])
 
         # (initial_config set on constructor)
         model.param1 = 101
-        self.assertEqual(model.export_data(), [None, 101, 22, 33, 4, []])
+        self.assertEqual(model.export_data(), [None, 101, 22, 33, 4, "05", []])
 
         model.reset()
 
-        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, []])
+        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, "05", []])
 
         # Change as a regular ReloadableModel
-        model.import_data([None, 10])
+        model.import_data([None, 10, None, None, None, 50])
 
         self.assertFalse(model.is_changed)
-        self.assertEqual(model.export_data(), [None, 10, 22, 33, 4, []])
+        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, 50, []])
 
         # (import_data() doesn't affect on initial_config)
         model.reset()
 
-        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, []])
+        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, "05", []])
 
         # Change as ReloadableMultiModel
-        sub_model0 = MyReloadableMultiModel.get_model_by_id("0")
-        sub_model0.is_change_on_command = True
-        sub_model0.import_data([None, 100])
-        sub_model0.param2 = 200
+        sub_model2 = MyReloadableMultiModel.get_model_by_id("2")
+        sub_model2.is_change_on_command = True
+        sub_model2.import_data([None, 100])
+        sub_model2.param2 = 200
         self.assertTrue(model.is_changed)
-        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, []])  # not changed
+        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, "05", []])  # not changed
 
         model.apply_changes()
 
-        self.assertEqual(model.export_data(), [None, 100, 200, 33, 4, []])  # changed
+        self.assertEqual(model.export_data(), [None, 100, 200, 33, 4, "05", []])  # changed
 
         # (sub_model.import_data() doesn't affect on initial_config)
         model.reset()
 
-        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, []])
+        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, "05", []])
 
         # Change ids
         model.ids = [0, 2]
@@ -1163,7 +1218,7 @@ class TestReloadableMultiModel(TestCase):
         self.assertFalse(model.is_changed)
         # self.assertEqual(model.export_data(), [None, 1, 22, 33, None, []])
         # (Note: indeed all changes are applied over previous setups. None cannot overwrite 4)
-        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, []])
+        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, "05", []])
 
         # # (ids property changes initial_config)
         # model.reset()
@@ -1178,82 +1233,83 @@ class TestReloadableMultiModel(TestCase):
         model = MyReloadableMultiModel.create_multimodel_by_ids([0, 1, 2, 5])
 
         self.assertFalse(model.is_changed)
-        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, []])
+        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, "05", []])
 
         # Change as a regular ReloadableModel
         model.import_data([None, 10])
 
         self.assertTrue(model.is_changed)
-        self.assertEqual(model.export_data()[:-1], [None, 1, 22, 33, 4])  # not changed
+        self.assertEqual(model.export_data()[:-1], [None, 1, 22, 33, 4, "05"])  # not changed
 
         model.apply_changes()
 
         self.assertFalse(model.is_changed)
-        self.assertEqual(model.export_data(), [None, 10, 22, 33, 4, []])  # changed
+        self.assertEqual(model.export_data(), [None, 10, 22, 33, 4, "05", []])  # changed
 
         # Change as ReloadableMultiModel
-        sub_model0 = MyReloadableMultiModel.get_model_by_id("0")
-        sub_model0.import_data([None, 100])
-        sub_model0.param2 = 200
+        sub_model2 = MyReloadableMultiModel.get_model_by_id("2")
+        sub_model2.param2 = 200
+        sub_model2.import_data([None, 100])
 
         self.assertTrue(model.is_changed)
-        self.assertEqual(model.export_data(), [None, 10, 22, 33, 4, []])  # not changed
+        self.assertEqual(model.export_data(), [None, 10, 22, 33, 4, "05", []])  # not changed
 
         model.apply_changes()
 
         self.assertFalse(model.is_changed)
-        self.assertEqual(model.export_data(), [None, 100, 200, 33, 4, []])  # changed
+        self.assertEqual(model.export_data(), [None, 100, 200, 33, 4, "05", []])  # changed
 
         # Change ids
         model.ids = [0, 2]
 
         self.assertTrue(model.is_changed)
-        self.assertEqual(model.export_data(), [None, 100, 200, 33, 4, []])  # not changed
+        self.assertEqual(model.export_data(), [None, 100, 200, 33, 4, "05", []])  # not changed
 
         # (Yet nothing changes initial_config till now)
         model.reset()
-        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, []])
+        self.assertEqual(model.export_data(), [None, 1, 22, 33, "04", "05", []])
 
         model.apply_changes()
 
         self.assertFalse(model.is_changed)
-        self.assertEqual(model.export_data(), [None, 1, 22, 33, 4, []])  # changed
-        # self.assertEqual(model.export_data(), [None, 1, 22, 33, None, []])  # changed
+        self.assertEqual(model.export_data(), [None, 1, 22, 33, "04", "05", []])  # changed
+        # self.assertEqual(model.export_data(), [None, 1, 22, 33, None, "05", []])  # changed
         #
         # # (Only ids property changes initial_config)
         # model.reset()
         #
-        # self.assertEqual(model.export_data(), [None, 1, 22, 33, None, []])
+        # self.assertEqual(model.export_data(), [None, 1, 22, 33, None, "05", []])
 
     def test_reset(self):
         # Create
         MyReloadableMultiModel.use_copies_for_sub_models = False
-        # (0, 1 - submodels ids)
-        model = MyReloadableMultiModel({"param1": 101, "param4": 4}, [2, 1])
+        # (1, 2 - submodels ids)
+        model = MyReloadableMultiModel({"param1": 101, "param4": 404}, [1, 2])
 
-        self.assertEqual(model.export_data(), [None, 101, 22, 3, 4, []])
+        self.assertEqual(model.export_data(), [None, 101, 22, 33, 4, "05", []])
 
         # Change
         model.param4 = 400
-        sub_model0 = MyReloadableMultiModel.get_model_by_id("2")
-        sub_model0.is_change_on_command = True
-        sub_model0.import_data([None, None, None, 300])
-        sub_model0.param2 = 200
+        sub_model2 = MyReloadableMultiModel.get_model_by_id("2")
+        sub_model2.is_change_on_command = True
+        sub_model2.import_data([None, None, None, 300])
+        sub_model2.param2 = 200
         model.apply_changes()
         model.param1 = 100
 
-        self.assertEqual(model.export_data(), [None, 100, 200, 300, 400, []])
+        self.assertEqual(model.export_data(), [None, 100, 200, 300, 4, "05", []])
 
         # Reset
         model.reset()
 
-        self.assertEqual(model.export_data(), [None, 101, 22, 3, 4, []])
+        self.assertEqual(model.export_data(), [None, 101, 22, 33, 4, "05", []])
 
     def test_copy(self):
         # use_copies_for_sub_models=True (default)
         model = MyReloadableMultiModel({"param1": 101, "param4": 404}, [0, 2, 5])
         model_copy = model.copy()
 
+        self.assertFalse(model.is_change_on_command)
         self.assertNotEqual(model, model_copy)
         self.assertEqual(model, model_copy.parent_model)
         self.assertIn(model_copy, model.derived_models)
@@ -1261,22 +1317,23 @@ class TestReloadableMultiModel(TestCase):
         self.assertNotEqual(model._sub_models, model_copy._sub_models)
         self.assertEqual([sub_model.id for sub_model in model_copy._sub_models], ["0", "2"])
 
-        self.assertEqual(model.export_data(), [None, 1, 22, 33, 404, []])
-        self.assertEqual(model_copy.export_data(), [None, 1, 22, 33, 404, []])
+        self.assertEqual(model.export_data(), [None, 1, 22, 33, 404, "05", []])
+        self.assertEqual(model_copy.export_data(), [None, 1, 22, 33, 404, "05", []])
 
-        model.import_data({"param1": 100})
+        model.import_data({"param1": 100, "param4": 400})
 
-        self.assertEqual(model.export_data(), [None, 100, 22, 33, 404, []])
-        self.assertEqual(model_copy.export_data(), [None, 100, 22, 33, 404, []])
+        # (1 in submodel overwrites just imported 100)
+        self.assertEqual(model.export_data(), [None, 1, 22, 33, 400, "05", []])
+        self.assertEqual(model_copy.export_data(), [None, 1, 22, 33, 400, "05", []])
 
         model.reset()
 
-        self.assertEqual(model.export_data(), [None, 1, 22, 33, 404, []])
-        self.assertEqual(model_copy.export_data(), [None, 100, 22, 33, 404, []])
+        self.assertEqual(model.export_data(), [None, 1, 22, 33, 404, "05", []])
+        self.assertEqual(model_copy.export_data(), [None, 1, 22, 33, 400, "05", []])
 
         model_copy.reset()
 
-        self.assertEqual(model_copy.export_data(), [None, 1, 22, 33, 404, []])
+        self.assertEqual(model_copy.export_data(), [None, 1, 22, 33, 404, "05", []])
 
         # use_copies_for_sub_models=False
         MyReloadableMultiModel.use_copies_for_sub_models = False

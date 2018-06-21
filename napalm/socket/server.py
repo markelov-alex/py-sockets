@@ -46,7 +46,8 @@ class Config:
     def __init__(self, host="", port=0, protocol_class=None):
         self._host = host
         self._port = port
-        self.protocol_class = protocol_class
+        if protocol_class:
+            self.protocol_class = protocol_class
 
 
 class ServerConfig(Config):
@@ -63,8 +64,8 @@ class ProtocolFactory:
         self.config = config
         self.app = app
 
-        self.protocol_class = config.protocol_class
-        self.logging = logging if self.protocol_class and self.protocol_class.is_server_protocol else\
+        self.protocol_class = config.protocol_class if config and hasattr(config, "protocol_class") else None
+        self.logging = logging if self.protocol_class and self.protocol_class.is_server_protocol else \
             _logging.getLogger("CLIENT")
 
     def dispose(self):
@@ -72,7 +73,7 @@ class ProtocolFactory:
         self.config = None
         self.app = None
         self.protocol_class = None
-        self.logging = None
+        # self.logging = None
 
     def create(self, send_bytes_method, close_connection_method, address):
         if not self.protocol_class:
@@ -425,7 +426,8 @@ class NonBlockingTCPServer(AbstractServer):
         self._sock.close()
         self._sock = None
 
-        for protocol in self._protocol_list:
+        # (list() needed to make a copy)
+        for protocol in list(self._protocol_list):
             protocol.dispose()
         self._protocol_list.clear()
         self._request_by_protocol.clear()
@@ -459,9 +461,9 @@ class NonBlockingTCPServer(AbstractServer):
         logging.debug("connectionLost for %s reason: %s", protocol, error)
         protocol.dispose()
         self._protocol_list.remove(protocol)
-        if protocol in self._request_by_protocol:
+        if protocol in list(self._request_by_protocol):
             del self._request_by_protocol[protocol]
-        if protocol in self._buffer_by_protocol:
+        if protocol in list(self._buffer_by_protocol):
             del self._buffer_by_protocol[protocol]
 
     def _workflow(self, sock):

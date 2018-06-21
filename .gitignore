@@ -1,4 +1,6 @@
 .DS_Store
+__pycache__
 # Editor directories and files
 .idea
 *.iml
+/napalm/play/__pycache__/*.pyc

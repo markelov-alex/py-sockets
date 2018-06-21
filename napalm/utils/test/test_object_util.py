@@ -388,21 +388,21 @@ class TestObjectToDict(TestCase):
     def test_object_to_dict(self):
         # Set up
         obj = {"a": 1, "b": 2, "c": 3, "d": 4}
-        print(self, "(test_object_to_dict)", obj)
+        # print(self, "(test_object_to_dict)", obj)
 
         # Assert
         self.assertEqual(object_util.object_to_dict(obj), {"a": 1, "b": 2, "c": 3, "d": 4})
 
         # Set up
         obj = SimpleObject()
-        print(self, "(test_object_to_dict)", obj.__dict__)
+        # print(self, "(test_object_to_dict)", obj.__dict__)
 
         # Assert
         self.assertEqual(object_util.object_to_dict(obj), {"a": 1, "b": 2, "c": 3, "d": 4, "f": 6})
 
         # Set up
         obj = PropertyObject()
-        print(self, "(test_object_to_dict)", obj.__dict__, vars(obj), dir(obj))
+        # print(self, "(test_object_to_dict)", obj.__dict__, vars(obj), dir(obj))
 
         # Assert
         self.assertEqual(object_util.object_to_dict(obj), {"a": 1, "b": 2, "c": 3, "d": 4})

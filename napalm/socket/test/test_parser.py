@@ -51,6 +51,22 @@ class TestCommandParser(TestCase):
         self.assertEqual(game_type, -1)
         self.assertEqual(room_type, -1)
 
+    def test_make_room_code(self):
+        room_code = CommandParser.make_room_code("1", "H", 10, 5)
+        self.assertEqual(room_code, "1_H_10_5")
+
+        room_code = CommandParser.make_room_code("1", "H", 10)
+        self.assertEqual(room_code, "1_H_10")
+
+        room_code = CommandParser.make_room_code("1", "H")
+        self.assertEqual(room_code, "1_H")
+
+        room_code = CommandParser.make_room_code("1")
+        self.assertEqual(room_code, "1")
+
+        room_code = CommandParser.make_room_code()
+        self.assertEqual(room_code, "")
+
     def test_split_commands(self):
         commands = self.parser.split_commands("a||b||c##d||e||f||")
         self.assertEqual(commands, ["a||b||c", "d||e||f||"])

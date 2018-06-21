@@ -177,9 +177,9 @@ class TestProtocol(TestCase):
         self.protocol.config = ServerConfig()
         self.protocol.flush = Mock()
         self.protocol.plugins = [ProtocolPlugin()]
-        self.protocol.plugins[0].dispose = plugin_dispose = Mock()
+        self.protocol.plugins[0].dispose = plugin_dispose = Mock(side_effect=self.protocol.plugins[0].dispose)
         self.protocol.player = player = MagicMock()
-        player.dispose = Mock()
+        player.dispose = Mock(side_effect=player.dispose)
         self.protocol.parser = {"some": "object"}
 
         self.protocol.dispose()

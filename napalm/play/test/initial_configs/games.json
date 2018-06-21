@@ -1,21 +1,21 @@
 {
   "1": {
     "_name_": "POKER",
-    "_": "",
+    "param1": "value401",
+    "param2": "value402",
+    "param3": "value403",
     "resume_game_countdown_sec": 0
   },
 
   "H": {
     "_name_": "POKER_HOLDEM",
-    "param1": "value1",
-    "param2": "value2",
-    "param3": "value3"
+    "param3": "valueH3"
   },
   "OH": {
     "_name_": "POKER_OMAHA_HILO",
-    "param1": "value3",
-    "param2": "value4",
-    "param3": null
+    "param1": "valueOH1",
+    "param3": null,
+    "param4": "valueOH4"
   },
 
   "11": {
@@ -25,8 +25,7 @@
   },
   "40": {
     "_name_": "TYPE_FAST",
-    "_": "",
-    "": ""
+    "param4": "value04"
   },
 
   "2": {

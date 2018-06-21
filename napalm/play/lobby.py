@@ -38,17 +38,18 @@ class RoomModel(ReloadableModel):
                 "max_player_count", "max_visitor_count", "room_password", "owner_user_id",
                 # Timing
                 "waiting_for_other_players_countdown_sec", "start_game_countdown_sec",
-                "resume_game_countdown_sec", "hold_place_while_rebuying_for_sec",
+                "resume_game_countdown_sec", "rebuying_sec",
                 "apply_round_delay_sec", "round_timeout_sec", "between_rounds_delay_sec", "turn_timeout_sec",
                 "game_timeout_sec", "show_game_winner_delay_sec", "show_tournament_winner_max_delay_sec",
                 "is_reset_round_timer_on_restore", "is_reset_turn_timer_on_restore"]
 
-    # todo add tournament_type and max_tournament_game_count (after game_params), tournament_game_count
     @property
     def _public_property_names(self):
         return ["room_id", "room_name", "room_code", "game_params",
+                "tournament_type", "max_tournament_game_count",
                 "max_player_count", "max_visitor_count", "is_password_needed",
                 "playing_count", "visitor_count",
+                # (Placed here to avoid creating new model classes)
                 "turn_timeout_sec", "between_rounds_delay_sec"]
 
     @property
@@ -63,13 +64,15 @@ class RoomModel(ReloadableModel):
 
     @property
     def room_code(self):
-        return self._room_code
+        # return self._room_code
+        return CommandParser.make_room_code(self.game_id, self.game_variation, self.game_type, self.room_type)
 
     @room_code.setter
     def room_code(self, value):
         self._room_code = value
         # Parse room_code
-        self.game_id, self.game_variation, self.game_type, self.room_type = CommandParser.parse_room_code(self._room_code)
+        self.game_id, self.game_variation, self.game_type, self.room_type = \
+            CommandParser.parse_room_code(self._room_code)
 
     @property
     def game_config_ids(self):
@@ -143,7 +146,7 @@ class RoomModel(ReloadableModel):
         self.waiting_for_other_players_countdown_sec = 0  # (0 for Poker, 15 for Monopoly)
         self.start_game_countdown_sec = 0  # (0 for Poker, 3 for Monopoly)
         self.resume_game_countdown_sec = 3
-        self.hold_place_while_rebuying_for_sec = 30
+        self.rebuying_sec = 30  # Hold place while rebuying for rebuying_sec
         self.apply_round_delay_sec = .5  # Time interval between new round start and turn moved to player
         self.round_timeout_sec = -1
         self.between_rounds_delay_sec = .5
@@ -179,8 +182,16 @@ class RoomModel(ReloadableModel):
 
         super().dispose()
 
-    def on_reload(self, new_initial_config=None):
-        super().on_reload(new_initial_config)
+    def _apply_initial_config(self):
+        super()._apply_initial_config()
+
+        if not self.game_config_model:
+            self.game_config_model = GameConfigModel.create_multimodel_by_ids(self.game_config_ids)
+        else:
+            self.game_config_model.ids = self.game_config_ids
+
+    def apply_changes(self):
+        super().apply_changes()
 
         if not self.game_config_model:
             self.game_config_model = GameConfigModel.create_multimodel_by_ids(self.game_config_ids)
@@ -307,6 +318,13 @@ class RoomSendMixIn:
             """:type : GameProtocol"""
             protocol.raw_binary_update(raw_binary)
 
+    # todo unittests
+    def send_player_sit_out(self, place_index, value):
+        for player in self.player_set:
+            protocol = player.protocol
+            """:type: PokerProtocol"""
+            protocol.player_sit_out(place_index, value)
+
 
 class Room(RoomSendMixIn, ExportableMixIn):
     logging = None
@@ -317,8 +335,8 @@ class Room(RoomSendMixIn, ExportableMixIn):
 
     @property
     def has_free_seat_to_play(self):
-        return self.room_model.max_player_count < 0 or \
-               (self.game and len(self.game.player_list) < self.room_model.max_player_count)
+        return self.room_model.max_player_count < 0 or not self.game or \
+               len(self.game.player_list) < self.room_model.max_player_count
 
     @property
     def is_empty_room(self):
@@ -368,7 +386,7 @@ class Room(RoomSendMixIn, ExportableMixIn):
         self.game.import_data(value)
 
     def __init__(self, house_config, room_model):
-        super().__init__()
+        super().__init__()  # ExportableMixIn.__init__(self)
         self.logging = logging.getLogger("ROOM")
 
         self.house_config = house_config
@@ -387,8 +405,10 @@ class Room(RoomSendMixIn, ExportableMixIn):
         self.on_game_state_changed = None
 
     def dispose(self):
-        self.remove_all_players()
+        self.logging.debug("(dispose) %s", self)
         self._dispose_game()
+        # Remove players after game disposed with correct finishing
+        self.remove_all_players()
 
         if self.lobby:
             self.lobby.remove_room(self)
@@ -400,7 +420,7 @@ class Room(RoomSendMixIn, ExportableMixIn):
 
         self.on_game_state_changed = None
 
-        self.logging = None
+        # self.logging = None
 
     def __repr__(self):
         return "<{0} id:{1} name:{2} room_code:{3} players:{4}/{5}>".format(
@@ -415,59 +435,26 @@ class Room(RoomSendMixIn, ExportableMixIn):
 
     # todo unittests
     def can_be_added_as_visitor(self, player):
-        """Can be used in lobby to avoid joining the room where you couldn't play"""
-        return self.room_model and (self.room_model.max_visitor_count < 0 or
-                                    len(self.room_model.visitor_count) < self.room_model.max_visitor_count)
+        if not self.room_model or player not in self.player_set and \
+                not self._check_can_be_added(player, self.room_model.room_password):
+            return False
+
+        return self.room_model.max_visitor_count < 0 or \
+            len(self.room_model.visitor_count) < self.room_model.max_visitor_count
 
     # todo unittests
     def can_be_added_as_player(self, player, place_index=-1, money_in_play=0):
-        return not self.game or self.game.can_be_added(player, place_index, money_in_play)
+        """Needed to do not leave current room when trying to enter
+        another one if cannot enter it with current params.
+        Note: For some config, one can be added as a player but not as a visitor."""
 
-    def add_player(self, player, password=None):
-        """
-        Add player or restore player added before.
-        :param player:
-        :param password:
-        :return:
-        """
-
-        self.logging.debug("R (add_player) player: %s self.player_set: %s", player, self.player_set)
-        # Restore session on client reconnect
-        if player in self.player_set:
-            self.logging.debug("R (add_player) Player is already added. Possibly restoring session. "
-                               "player: %s player_set: %s", player, self.player_set)
-
-            player.protocol.confirm_joined_the_room(self.room_model.export_public_data())
-            if self.game:
-                self.get_game_info(player, True)
-            return True
-
-        if not self._check_able_to_add_player(player, password):
+        if not self.room_model or player not in self.player_set and \
+                not self._check_can_be_added(player, self.room_model.room_password):
             return False
 
-        # Add
-        player.room = self
-        self.player_set.add(player)
-        self.player_by_user_id[player.user_id] = player
-        self.room_model.total_player_count += 1
+        return not self.game or self.game.can_be_added(player, place_index, money_in_play)
 
-        self.logging.debug("R temp self.player_set.add player: %s", player)
-        if not self.game:
-            self._create_game()
-
-        # self.logging.debug("temp (room.add_player) Add %s", player)
-        # (Check is_connected is to make server restoring faster)
-        if player.is_connected:
-            player.protocol.confirm_joined_the_room(self.room_model.export_public_data())
-
-            if self.house_model.is_notify_each_player_joined_the_room:
-                self.send_player_joined_the_room(player, [player])
-            if self.game:
-                self.get_game_info(player, True)
-
-        return True
-
-    def _check_able_to_add_player(self, player, password):
+    def _check_can_be_added(self, player, password, is_message_enabled=True):
         # Avoid players entering same room from same account
         # (todo skip that kind of rooms from room list in lobby?)
         if not self.house_model.is_allow_multisession_in_the_room and player.user_id in self.player_by_user_id:
@@ -492,14 +479,55 @@ class Room(RoomSendMixIn, ExportableMixIn):
             return False
         return True
 
-        # todo remake visitor_count checking
-        # max_visitor_count = self.room_model.max_visitor_count
-        # if max_visitor_count >= 0 and len(self.player_set) >= max_visitor_count:
-        #     self.logging.warning("R WARNING! (add_player) Too many visitors. player: %s len(player_set): %s "
-        #                          "max_visitor_count: %s", player, len(self.player_set), max_visitor_count)
-        #     # self.logging.debug("temp (room.add_player) fail-too-many-visitors %s", player)
-        #     player.protocol.show_ok_message_dialog(MessageCode.JOIN_ROOM_FAIL_TITLE, MessageCode.JOIN_ROOM_FAIL)
-        #     return False
+    def add_player(self, player, password=None):
+        """
+        Add player or restore player added before.
+        :param player:
+        :param password:
+        :return:
+        """
+
+        self.logging.debug("R (add_player) player: %s self.player_set: %s", player, self.player_set)
+        # Restore session on client reconnect
+        if player in self.player_set:
+            self.logging.debug("R (add_player) Player is already added. Possibly restoring session. "
+                               "player: %s player_set: %s", player, self.player_set)
+
+            player.protocol.confirm_joined_the_room(self.room_model.export_public_data())
+            if self.game:
+                self.get_game_info(player, True)
+            return True
+
+        # ?- if player.room_id == self.room_id:
+        #     password = self.room_model.room_password
+
+        if not self._check_can_be_added(player, password):
+            return False
+
+        if player.room and player.room != self:
+            player.room.remove_player(player)
+
+        # Add
+        player.room = self
+        self.player_set.add(player)
+        self.player_by_user_id[player.user_id] = player
+        self.room_model.total_player_count += 1
+
+        self.logging.debug("R temp self.player_set.add player: %s", player)
+        if not self.game:
+            self._create_game()
+
+        # self.logging.debug("temp (room.add_player) Add %s", player)
+        # (Check is_connected is to make server restoring faster)
+        if player.is_connected:
+            player.protocol.confirm_joined_the_room(self.room_model.export_public_data())
+
+            if self.house_model.is_notify_each_player_joined_the_room:
+                self.send_player_joined_the_room(player, [player])
+            if self.game:
+                self.get_game_info(player, True)
+
+        return True
 
     def remove_player(self, player):
         # (Checking player.game only for performance optimization)
@@ -540,10 +568,20 @@ class Room(RoomSendMixIn, ExportableMixIn):
 
     def remove_all_players(self):
         # player_list = list(self.player_set)
-        for player in self.player_set:
+        # (list() makes a copy of a set to enable remove items during iterating)
+        for player in list(self.player_set):
             self.remove_player(player)
 
     # Game
+
+    def check_and_apply_changes(self):
+        # Can be applied only between games
+        if (not self.game or not self.game.is_in_progress) and self.room_model.is_changed:
+            # Apply
+            self.room_model.apply_changes()
+            # Inform about
+            for player in self.player_set:
+                self.lobby.get_room_info(player, self.room_id)
 
     def get_game_info(self, player, is_get_room_content=False):
         """
@@ -570,10 +608,6 @@ class Room(RoomSendMixIn, ExportableMixIn):
             return False
 
         result = self.game.add_player(player, place_index, money_in_play)
-        if result:
-            # self.room_model.playing_count += 1
-            self.room_model.playing_count = len(self.game.player_list) if self.game else 0
-
         return result
 
     def leave_the_game(self, player):
@@ -582,7 +616,7 @@ class Room(RoomSendMixIn, ExportableMixIn):
                                  "for player: %s", self.player_set, player)
             return False
 
-        result = self.game.remove_player(player)
+        result = self.game.remove_player(player) if self.game else False
         return result
 
     def _create_game(self):
@@ -666,8 +700,9 @@ class RoomManager:
     def rooms_data(self, value):
         if value is None:
             return
-        for room_id, room_data in value:
-            room = self.room_by_id[room_id] if room_id in self.room_by_id else self._create_room(room_data)
+        items = value.items() if isinstance(value, dict) else (enumerate(value) if isinstance(value, list) else None)
+        for room_id, room_data in items:
+            room = self.room_by_id[room_id] if room_id in self.room_by_id else self._create_room([room_id])
             room.import_data(room_data)
 
     def __init__(self, house, lobby_model):
@@ -685,7 +720,8 @@ class RoomManager:
             self._create_room(room_model)
 
     def dispose(self):
-        for room in self.room_list:
+        # (list() needed to make a copy)
+        for room in list(self.room_list):
             room.dispose()
         self.room_by_id = {}
         self.room_list = []
@@ -754,12 +790,15 @@ class RoomManager:
 
         room_info = room_info_or_model
         # room_id
-        room_id = room_info[0] or 0
+        room_id = (room_info["room_id"] if "room_id" in room_info else room_info[0]) or 0
         while str(room_id) in self.room_by_id:
             if not isinstance(room_id, int):
                 room_id = 0
             room_id += 1
-        room_info[0] = str(room_id)
+        if "room_id" in room_info:
+            room_info["room_id"] = str(room_id)
+        else:
+            room_info[0] = str(room_id)
 
         # Create
         room_model = RoomModel.create_model(room_info)
@@ -812,18 +851,23 @@ class RoomManager:
             self.get_room_info(player, room.room_id)
         else:
             self.logging.error("L WARNING! (create_room) Failed to create the room with "
-                                 "room_info: %s for player: %s", room_info, player)
+                               "room_info: %s for player: %s", room_info, player)
             self.get_room_info(player, None)
 
     def edit_room(self, player, room_info):
-        room_id = room_info[0]
+        room_id = str(room_info[0])
         room = self.room_by_id[room_id] if room_id in self.room_by_id else None
         # todo extract all owner checks to method
-        owner_user_id = room.room_model.owner_user_id
+        owner_user_id = room.room_model.owner_user_id if room else None
         if room and owner_user_id and owner_user_id == player.user_id:
             # todo try apply_changes() if possible (or set is_change_on_command=True inside the room (or game)
             #  for each instance when game is on and applying impossible and set to False between games (??-))
             room.room_model.import_data(room_info)
+            room.check_and_apply_changes()
+            # # (Theoretically, it's possible to )
+            # if player.room != room:
+            #     self.get_room_info(player, room_id)
+            # (Response is needed as acknowledgement)
             self.get_room_info(player, room_id)
         else:
             if not room:
@@ -844,7 +888,11 @@ class RoomManager:
     # (Use rooms)
 
     def get_room_by_id(self, room_id):
-        return self.room_by_id[room_id] if room_id in self.room_by_id else None
+        room_id = str(room_id)
+        room = self.room_by_id[room_id] if room_id in self.room_by_id else None
+        if not room:
+            self.logging.warning("L WARNING! There is no room with room_id: %s", room_id)
+        return room
 
     def get_room_list(self, player):
         player.protocol.rooms_list(self.rooms_export_public_data(player))
@@ -903,11 +951,11 @@ class RoomManager:
         # Join
         if free_room:
             if find_and_join == FindAndJoin.JUST_FIND:
-                self.get_game_info(player, free_room.room_id)
+                self.get_game_info(player, free_room.room_id, True)
             elif find_and_join == FindAndJoin.JOIN_ROOM:
                 self.join_the_room(player, free_room.room_id)
             elif find_and_join == FindAndJoin.JOIN_GAME:
-                self.join_the_game(player, free_room.room_id)
+                self.join_the_game(player, free_room.room_id, money_in_play=free_room.room_model.max_buy_in)
         else:
             self.logging.warning("L WARNING! (find_free_room) Cannot find any free_room: %s player: %s",
                                  free_room, player)
@@ -921,20 +969,23 @@ class RoomManager:
         room = self.room_by_id[room_id] if room_id in self.room_by_id else None
         # todo add player_info_list (visitors+players) on house_config.is_room_visitors_displayed
         # ?room_info(None)
-        if room.is_private and room.owner_user_id != player.user_id:
+        if room and room.room_model.is_private and room.room_model.owner_user_id != player.user_id:
             room = None
 
-        player.protocol.room_info(room.export_public_data() if room else None)
+        player.protocol.room_info(room.room_model.export_public_data() if room else None)
 
     def get_game_info(self, player, room_id, is_get_room_content=False):
         room = self.room_by_id[room_id] if room_id in self.room_by_id else None
-        if room and (not room.is_private or room.owner_user_id == player.user_id):
+        if room and (not room.room_model.is_private or
+                     room.room_model.owner_user_id == player.user_id or
+                     room == player.room):
             room.get_game_info(player, is_get_room_content)
         else:
             player.protocol.game_info(None, None)
 
     def get_player_info_in_game(self, asking_player, room_id, place_index):
-        room = self.room_by_id[room_id]
+        """get_player_info() by room_id"""
+        room = self.room_by_id[room_id] if room_id in self.room_by_id else None
         if not room:
             self.logging.warning("L WARNING! (get_player_info_in_game) There is no room with room_id: %s", room_id)
             return
@@ -945,52 +996,37 @@ class RoomManager:
             room.game.get_player_info(asking_player, place_index)
 
     def join_the_room(self, player, room_id=None, password=None):
-        return self._do_join_the_room(player, room_id, password)
-
-    def _do_join_the_room(self, player, room_id=None, password=None):
         """Only as visitor"""
         room = self.get_room_by_id(room_id or player.room_id)
+        if not room:
+            return None
 
         # self.logging.debug("L temp (join_the_room) %s %s %s"
         # "player: %s player.room: %s", room, room_id, self.room_by_id, player, player.room)
-        if not room:
-            self.logging.warning("L WARNING! There is no room with room_id: %s player: %s", room_id, player)
-            return None
-
         # todo check unittests (removed can_be_added_as_player calling)
-        if not room.can_be_added_as_player(player):
+        if not room.can_be_added_as_visitor(player):
             self.logging.warning("L WARNING! (join_the_game) Cannot join the room! "
                                  "No more free space for visitors.. "
                                  "room_id: %s player: %s max_visitors: %s cur_visitors: %s", room_id, player,
                                  room.room_model.max_visitor_count, room.room_model.visitor_count)
             return None
-
-        # Check player is already in some another room
-        if player.room and player.room != room:  # and not self.house_model.is_allow_multisession_in_the_room:
-            self.leave_the_room(player)
-
-        if player in self.present_player_set:
-            self.present_player_set.remove(player)
-
-        # Enter the room
-        room.add_player(player, password)
-        if player.is_connected:
-            self.logging.debug("L (join_the_room) [try_save] player: %s", player)
-            self.house.try_save_house_state_on_change()
-        return room
+        return self._do_join_the_room(player, room_id, password)
 
     # todo add to unittests the case where we try to join full game and thou have been rejected
     # without joining the room
     def join_the_game(self, player, room_id=None, password=None, place_index=-1, money_in_play=0):
         """Only as player"""
         room = self.get_room_by_id(room_id or player.room_id)
-        if not room.can_be_added_as_player(player, place_index, money_in_play=money_in_play):
+        if not room:
+            return None
+
+        if not room.can_be_added_as_player(player, place_index, money_in_play):
             self.logging.warning("L WARNING! (join_the_game) Cannot join the game! "
                                  "Maybe no free seats or game is already started. "
                                  "room_id: %s player: %s", room_id, player)
             return None
 
-        room = self._do_join_the_room(player, room_id, password)
+        room = self._do_join_the_room(player, room_id or player.room_id, password)
         if room and room.join_the_game(player, place_index, money_in_play):
             # if player in self.present_player_set:
             #     self.present_player_set.remove(player)
@@ -1000,6 +1036,26 @@ class RoomManager:
         else:
             self.logging.warning("L WARNING! (join_the_game) Cannot join! Player didn't joined the "
                                  "room: %s for player: %s", room, player)
+
+    def _do_join_the_room(self, player, room_id=None, password=None):
+        room = self.get_room_by_id(room_id or player.room_id)
+        if not room:
+            return None
+
+        # Check player is already in some another room
+        if room == player.room:
+            return room
+        if player.room:  # and player.room != room:  # and not self.house_model.is_allow_multisession_in_the_room:
+            self.leave_the_room(player)
+
+        # Enter the room
+        if room.add_player(player, password) and player in self.present_player_set:
+            self.present_player_set.remove(player)
+
+        if player.is_connected:
+            self.logging.debug("L (join_the_room) [try_save] player: %s", player)
+            self.house.try_save_house_state_on_change()
+        return room
 
     def leave_the_game(self, player):
         room = player.room if player else None
@@ -1014,8 +1070,9 @@ class RoomManager:
     def leave_the_room(self, player):
         room = player.room if player else None
         if room:
-            self.present_player_set.add(player)
-            room.remove_player(player)
+            if room.remove_player(player):
+                self.present_player_set.add(player)
+
             if player.is_connected:
                 self.logging.debug("L (leave_the_room) [try_save] player: %s", player)
                 self.house.try_save_house_state_on_change()
@@ -1075,6 +1132,7 @@ class Lobby(RoomManager, ExportableMixIn):
         self.logging.debug("L Create Lobby %s", self.house_config.house_id)  # , self.house_config.room_info_list)
         # UserManager.__init__(self, house_config)
         RoomManager.__init__(self, house, lobby_model)
+        ExportableMixIn.__init__(self)
 
         # self.entered_player_set = set()
         # All players entered the lobby, staying there or joined the rooms
@@ -1088,7 +1146,7 @@ class Lobby(RoomManager, ExportableMixIn):
 
         self.house_config = None
         self.house_model = None
-        self.logging = None
+        # self.logging = None
 
         self.player_set.clear()
         self.present_player_set.clear()
@@ -1130,7 +1188,7 @@ class Lobby(RoomManager, ExportableMixIn):
         # Restore in room and game (if player is restoring: after reconnect or server recovered)
         if player.room_id:
             if player.place_index >= 0:
-                self.join_the_game(player)
+                self.join_the_game(player, place_index=player.place_index)
             else:
                 self.join_the_room(player)
 

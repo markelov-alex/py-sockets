@@ -627,7 +627,7 @@ class GameClientProtocol(ClientProtocol):
     def get_lobby_info_list(self):
         self.send([client_commands.GET_LOBBY_INFO_LIST])
 
-    def change_lobby(self, lobby_id=-1):
+    def change_lobby(self, lobby_id=None):
         self.send([client_commands.CHANGE_LOBBY, lobby_id])
 
     def get_rooms_list(self):

@@ -87,7 +87,8 @@ class TestServerSystem(TestCase):
 
         self.server_app.dispose()
         self.server_app_thread.join()
-        for client in self.clients:
+        # (list() needed to make a copy)
+        for client in list(self.clients):
             client.dispose()
         for client, client_thread in self.client_thread_by_client:
             client_thread.join()

@@ -3,6 +3,9 @@ import logging as _logging
 import os
 from threading import RLock
 
+import time
+
+from napalm.async import AbstractTimer
 from napalm.core import ExportableMixIn, ReloadableModel
 from napalm.play.protocol import MessageType
 from napalm.socket.protocol import Protocol
@@ -92,8 +95,8 @@ class Player(ExportableMixIn):
     @property
     def _property_names(self):
         # To save state
-        return ["session_id", "lobby_id", "room_id", "place_index", "is_playing", "is_sit_out",
-                "money_in_play", "gift_image_url"]
+        return ["session_id", "lobby_id", "room_id", "place_index", "is_playing",
+                "is_sit_out", "money_in_play", "gift_image_url"]
 
     @property
     def _public_property_names(self):
@@ -168,15 +171,15 @@ class Player(ExportableMixIn):
         # (To clear ref on dummy after detach_protocol())
         self.protocol = None
 
-        # try to reset all properties
-        self.__init__()
+        # -try to reset all properties
+        # self.__init__()
 
         self.lobby_id = None
         self.room_id = None
         self.place_index = -1
         self.is_playing = False
 
-        self.logging = None
+        # self.logging = None
 
     def __repr__(self):
         session_id_suffix = "(" + str(self.session_id) + ")" if self.session_id >= 0 else ""
@@ -191,10 +194,15 @@ class Player(ExportableMixIn):
         # self.is_in_game = bool(self.game)
         return super().export_data()
 
+    # def reset_state(self):
+    #     """Reset all state properties"""
+    #     self.reset_game_state()
+    #     # self. =
+
     # Override
     def reset_game_state(self):
-        # Reset state properties for current game
-        pass
+        """Reset state properties only for a current game"""
+        self.is_playing = False
 
     def update_self_user_info(self):
         if self.protocol:
@@ -209,14 +217,17 @@ class Player(ExportableMixIn):
             max_buy_in = self.room.room_model.max_buy_in
             amount = min(max_buy_in - self.money_in_play, amount)
 
-            if amount > 0:
-                amount = self.user.take_money(amount, min_buy_in)
+            # (Check money_in_play+amount for rebuy)
+            new_money_in_play = self.money_in_play + min(amount, self.user.money_amount)
+            if amount > 0 and new_money_in_play >= min_buy_in:
+                amount = self.user.take_money(amount)
                 self.money_in_play += amount
 
-            self.update_self_user_info()
+                if amount > 0:
+                    self.update_self_user_info()
 
-            self.logging.debug("  temp(_add_money_in_play) player: %s amount: %s player.money_amount: %s "
-                               "player.money_in_play: %s", self, amount, self.money_amount, self.money_in_play)
+            # self.logging.debug("  temp(_add_money_in_play) player: %s amount: %s player.money_amount: %s "
+            #                    "player.money_in_play: %s", self, amount, self.money_amount, self.money_in_play)
 
     def remove_money_in_play(self):
         if self.money_in_play:
@@ -225,7 +236,7 @@ class Player(ExportableMixIn):
             self.update_self_user_info()
 
 
-class PlayerManager:
+class UserPlayerManager:
     lock = RLock()
     logging = None
 
@@ -265,7 +276,8 @@ class PlayerManager:
         self.max_session_id = None
 
     def dispose(self):
-        for player in self.player_set:
+        # (list() needed to make a copy)
+        for player in list(self.player_set):
             # (To avoid calling user.remove_player())
             player.user = None
             player.dispose()
@@ -290,8 +302,9 @@ class PlayerManager:
                     player = self.disconnected_player_by_session_id.popitem()[1] \
                         if len(self.disconnected_player_by_session_id) else None
                 else:
-                    player = self.disconnected_player_by_session_id[session_id] \
+                    player = self.disconnected_player_by_session_id.pop(session_id) \
                         if session_id in self.disconnected_player_by_session_id else None
+
                 if player:
                     # player.is_just_restored = True
                     player.protocol = protocol
@@ -336,7 +349,7 @@ class PlayerManager:
 
         self.player_by_session_id[session_id] = player
 
-        if not player.protocol or player.protocol == Protocol.dummy_protocol:
+        if not player.is_connected:
             self.on_disconnect(player)
 
     def remove_player(self, player):
@@ -355,7 +368,7 @@ class PlayerManager:
                 self.dispose()
 
 
-class User(PlayerManager, ExportableMixIn):
+class User(UserPlayerManager, ExportableMixIn):
     """
     - Current user data
     - Connection to back-end (through service)
@@ -373,18 +386,23 @@ class User(PlayerManager, ExportableMixIn):
 
     @property
     def _property_names(self):
+        return self._public_property_names + [
+            # For save/restore
+            "players_data"]
+
+    @property
+    def _public_property_names(self):
         return ["user_id", "social_id", "first_name", "last_name",
                 "image_url", "image_url_small", "image_url_normal",
                 "level", "money_amount", "is_in_game",
-                "join_date", "vip_days_available",
-                # For save/restore
-                "players_data"]
+                "join_date", "vip_days_available"]
 
     def __init__(self, house_config=None, user_id="", social_id=""):  # , access_token="", auth_sig="", backend_info=None):
         self.logging = _logging.getLogger("USER")
 
         super().__init__()
-        PlayerManager.__init__(self, house_config)
+        ExportableMixIn.__init__(self)
+        UserPlayerManager.__init__(self, house_config)
 
         # if not house_config:
         #     return
@@ -435,11 +453,11 @@ class User(PlayerManager, ExportableMixIn):
             self.house.remove_user(self)
             self.house = None
 
-        PlayerManager.dispose(self)
+        UserPlayerManager.dispose(self)
 
         self.house_config = None
         self.house_model = None
-        self.logging = None
+        # self.logging = None
 
         self.user_id = None
         self.social_id = None
@@ -450,8 +468,8 @@ class User(PlayerManager, ExportableMixIn):
             self._service.dispose()
             self._service = None
 
-        # try to reset all properties
-        self.__init__()
+        # # try to reset all properties
+        # self.__init__()
 
     def __repr__(self):
         return "<{0} user_id:{1}>".format(self.__class__.__name__, self.user_id)
@@ -474,7 +492,7 @@ class User(PlayerManager, ExportableMixIn):
         elif self.social_id != social_id:
             return False
 
-        backend_info = self.house_model.get_backend_info(backend)
+        backend_info = self.house_config.get_backend_info(backend)
         return self._service.check_auth_sig(social_id, access_token, auth_sig, backend_info)
 
     def remove_all_money_in_play(self):
@@ -486,18 +504,24 @@ class User(PlayerManager, ExportableMixIn):
                 player.money_in_play = 0
         # Add back to user
         if amount:
-            result = self._service.increase(amount)
-            amount = result["money"] if "money" in result else 0
+            result = self._service.increase(money=amount)
+            amount = result["money"] if result and "money" in result else 0
             self.money_amount += amount
         return amount
 
-    def take_money(self, amount, min_amount):
-        if self.money_amount < min_amount or self.money_amount <= 0:
+    def take_money(self, amount, min_amount=0):
+        """
+        Take "amount" of money but not less than "min_amount".
+        """
+        if self.money_amount < min_amount or amount <= 0:
             return 0
         amount = min(amount, self.money_amount)
 
+        if amount <= 0:
+            return 0
+
         result = self._service.decrease(money=amount)
-        amount = result["money"] if "money" in result else 0
+        amount = result["money"] if result and "money" in result else 0
 
         self.money_amount -= amount
 
@@ -508,7 +532,7 @@ class User(PlayerManager, ExportableMixIn):
             return 0
 
         result = self._service.increase(money=amount)
-        amount = result["money"] if "money" in result else 0
+        amount = result["money"] if result and "money" in result else 0
 
         self.money_amount += amount
         return amount
@@ -550,13 +574,14 @@ class UserManager:
     @property
     def players_online(self):
         # return len(self._player_set)
-        return sum([len(user.player_set) for user in self._user_by_id])
+        return sum([len(user.player_set) for user in self._user_by_id.values()])
 
     @property
     def players_connected(self):
         # For statistics
-        # return len(self._player_set) - len(self._disconnected_player_set)
-        return sum([len(user.player_set) - len(user.disconnected_player_set) for user in self._user_by_id])
+        # return len(self._player_set) - len(self.disconnected_player_by_session_id)
+        return sum([len(user.player_set) - len(user.disconnected_player_by_session_id)
+                    for user in self._user_by_id.values()])
 
     # Save/Restore
 
@@ -570,7 +595,7 @@ class UserManager:
         if value is None:
             return
         for user_id, user_info in value.items():
-            user = self._retrieve_user(user_id)
+            user = self._get_or_create_user(user_id)
             user.import_data(user_info)
             self._add_user(user)
         self._update_players_online()
@@ -589,7 +614,7 @@ class UserManager:
         self._is_restoring_now = False
 
     def dispose(self):
-        for user in self._user_by_id.values():
+        for user in list(self._user_by_id.values()):
             user.dispose()
         self._user_by_id.clear()
 
@@ -617,7 +642,7 @@ class UserManager:
         :return:
         """
 
-        user = self._retrieve_user(user_id)
+        user = self._get_or_create_user(user_id)
         if not user.check_credentials(social_id, access_token, auth_sig, backend):
             return None
         self._add_user(user)
@@ -644,10 +669,10 @@ class UserManager:
 
         self._update_players_online()
 
-    def _retrieve_user(self, user_id):
+    def _get_or_create_user(self, user_id):
         user = self._user_by_id[user_id] if user_id in self._user_by_id else None
         if not user:
-            user = self.house_model.user_class(self.house_config, user_id)
+            user = self.house_config.user_class(self.house_config, user_id)
 
             # Get user info from backend on new user just connected
             if not self._is_restoring_now:
@@ -713,7 +738,8 @@ class LobbyManager:
             self._lobby_by_id[lobby.lobby_id] = lobby
 
     def dispose(self):
-        for lobby in self._lobby_list:
+        # (list() needed to make a copy)
+        for lobby in list(self._lobby_list):
             # Dispose
             lobby.dispose()
         self._lobby_list.clear()
@@ -724,17 +750,19 @@ class LobbyManager:
 
     # Protocol process methods (Lobby)
 
-    def goto_lobby(self, player, lobby_id=-1):
-        # Use default
-        if lobby_id < 0:
+    def goto_lobby(self, player, lobby_id=None):
+        if lobby_id is None:
+            # Trying to restore player in lobby
             if player.lobby:
                 return
-            lobby_id = player.lobby_id if player.lobby_id >= 0 else self.house_model.default_lobby_id
+            lobby_id = player.lobby_id if player.lobby_id is not None else self.house_model.default_lobby_id
 
         # Get lobby instance
-        if lobby_id < 0:
+        if lobby_id is None:
+            # Use default
             lobby = self.choose_default_lobby(player)
         else:
+            lobby_id = str(lobby_id)
             if lobby_id not in self._lobby_by_id:
                 self.logging.error("Try to go to lobby %s which does not exist! lobby_ids: %s",
                                    lobby_id, self._lobby_by_id.keys())
@@ -751,8 +779,8 @@ class LobbyManager:
         return self._lobby_list[0]
 
     def get_lobby_info_list(self, player):
-        self.logging.debug("L (get_lobby_info_list) house_id: %s lobby_info_list: %s",
-                           self.house_model.house_id, self.house_model.lobby_info_list)
+        # self.logging.debug("L (get_lobby_info_list) house_id: %s lobby_info_list: %s",
+        #                    self.house_model.house_id, self.house_model.lobby_info_list)
 
         lobby_info_list = [lobby.lobby_model.export_public_data() for lobby in self._lobby_list]
         # lobby_info_list = [lobby.lobby_model.export_public_data()
@@ -761,7 +789,7 @@ class LobbyManager:
 
     def send_message(self, message_type, text, sender_player, receiver_id=-1, is_check_security=False):
         # is_check_security - to check params received from network to avoid spamming
-        if not message_type or not text or not sender_player:
+        if message_type is None or not text or not sender_player:
             return
 
         # Mail messages (through php server, receiver should react on it: read, accept, delete, etc)
@@ -838,7 +866,8 @@ class SaveLoadHouseStateMixIn(ExportableMixIn):
         dir_name = os.path.dirname(filename)
         if dir_name and not os.path.exists(dir_name):
             os.makedirs(dir_name)
-        json.dump(state_json, open(filename, "w"))
+        with open(filename, "w") as file:
+            json.dump(state_json, file)
 
     # todo use also memcached instead of saving to file all the time
     # Override
@@ -846,9 +875,10 @@ class SaveLoadHouseStateMixIn(ExportableMixIn):
         filename = "dumps/" + name + "_state_dump.json"
         if not os.path.exists(filename):
             self.logging.warning("L (_load_state) There is no json file with lobby state data. "
-                                 "filename: %s", filename, self)
+                                 "filename: %s", filename)
             return None
-        return json.load(open(filename))
+        with open(filename) as file:
+            return json.load(file)
 
 
 class House(LobbyManager, UserManager, SaveLoadHouseStateMixIn):
@@ -886,20 +916,28 @@ class House(LobbyManager, UserManager, SaveLoadHouseStateMixIn):
         self.house_model = house_config.house_model
 
         self.logging = _logging.getLogger("HOUSE")
-        self.logging.debug("L Create House %s", self.house_model.house_id)  # , self.house_model.room_info_list)
+        self.logging.debug("L Create House %s", self.house_model.house_id if self.house_model else None)  # , self.house_model.room_info_list)
 
         SaveLoadHouseStateMixIn.__init__(self)
         LobbyManager.__init__(self, house_config)
         UserManager.__init__(self, house_config)
 
     def dispose(self):
-        UserManager.dispose(self)
+        print("--------------DISPOSE HOUSE--------------")
         LobbyManager.dispose(self)
+        UserManager.dispose(self)
 
         self.house_config = None
         self.house_model = None
 
-        self.logging = None
+        print("  --------------DISPOSE HOUSE--------------")
+        if AbstractTimer._timers:
+            print("SOME timers were not disposed!!!", AbstractTimer._timers)
+            time.sleep(1)
+            pass
+
+        # (No need. Causes tests fail)
+        # self.logging = None
 
     def __repr__(self):
         return "<{0} id:{1} name:{2} lobby_count:{3} user_count:{4}>".format(
@@ -956,7 +994,7 @@ class HouseModel(ReloadableModel):
         self.port = None
         self.lobbies = None
         # -1 for choosing appropriate lobby automatically
-        self.default_lobby_id = -1
+        self.default_lobby_id = None
         # Allow user to play without authorizing
         self.is_allow_guest_auth = True
         # Allow playing from same user account on current server from multiscreen client,
@@ -1012,8 +1050,6 @@ class HouseModel(ReloadableModel):
                                           self.lobbies, self.lobby_model_class, True)
 
         # Update default_lobby_id
-        # (no need. -1 used to arrange players automatically)
-        # if self.default_lobby_id < 0 or self.default_lobby_id not in self.lobby_model_by_id:
-        #     self.default_lobby_id = self.lobby_model_list[0].lobby_id if len(self.lobby_model_list) else -1
-        if str(self.default_lobby_id) != "-1" and self.default_lobby_id not in self.lobby_model_by_id:
-            self.default_lobby_id = -1
+        # (no need. -1 (None) used to arrange players automatically)
+        if self.default_lobby_id is not None and self.default_lobby_id not in self.lobby_model_by_id:
+            self.default_lobby_id = None

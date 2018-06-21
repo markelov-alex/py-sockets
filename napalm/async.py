@@ -1,7 +1,6 @@
 import threading
-from threading import Thread
-
 import time
+from threading import Thread
 
 from twisted.internet import reactor
 from twisted.internet.task import deferLater, LoopingCall
@@ -240,22 +239,22 @@ class TwistedTimeout(Timeout):
         # Clear all listeners
         self.timer_signal.remove_all()
         self.timer_complete_signal.remove_all()
-        print("TwTimeout (dispose)", "self._running:", self._running,
-              "time:", time.time() - self._create_time, "name:", self.name)
+        # print("TwTimeout (dispose)", "self._running:", self._running,
+        #       "time:", time.time() - self._create_time, "name:", self.name)
 
     def reset(self):
         self.stop()
         self._iterations = 0
-        print("TwTimeout (reset)", "__running:", self._running,
-              "time:", time.time() - self._create_time, "name:", self.name)
+        # print("TwTimeout (reset)", "__running:", self._running,
+        #       "time:", time.time() - self._create_time, "name:", self.name)
 
     def start(self):
         if self._running or self._iterations >= self.repeat_count > 0:
             return
 
         self._running = True
-        print("TwTimeout (start)", "__running:", self._running,
-              "time:", time.time() - self._create_time, "name:", self.name)
+        # print("TwTimeout (start)", "__running:", self._running,
+        #       "time:", time.time() - self._create_time, "name:", self.name)
         self._delayedCall = reactor.callLater(self.delay_sec, self._iteration_complete)
 
     def stop(self):
@@ -263,24 +262,24 @@ class TwistedTimeout(Timeout):
             return
 
         self._running = False
-        print("TwTimeout (stop)", "__running:", self._running,
-              "time:", time.time() - self._create_time, "name:", self.name)
+        # print("TwTimeout (stop)", "__running:", self._running,
+        #       "time:", time.time() - self._create_time, "name:", self.name)
         if self._delayedCall.active():
             self._delayedCall.cancel()
         self._delayedCall = None
 
     def _iteration_complete(self):
-        print("TwTimeout (_iteration_complete)", "__running:", self._running, "__iterations:", self._iterations,
-              "repeat_count:", self.repeat_count, "time:", time.time() - self._create_time, "name:", self.name)
+        # print("TwTimeout (_iteration_complete)", "__running:", self._running, "__iterations:", self._iterations,
+        #       "repeat_count:", self.repeat_count, "time:", time.time() - self._create_time, "name:", self.name)
         if self._running:
             if self.repeat_count <= 0 or self._iterations < self.repeat_count:
-                print("TwTimeout   (_iteration_complete) timer_signal.dispatch")
+                # print("TwTimeout   (_iteration_complete) timer_signal.dispatch")
                 self.timer_signal.dispatch()
                 self._iterations += 1
                 if self._iterations == self.repeat_count:
                     # print("           (__run) timer_complete_signal-dispatch")
                     self.timer_complete_signal.dispatch()
-                    print("TwTimeout     (_iteration_complete) timer_complete_signal.dispatch")
+                    # print("TwTimeout     (_iteration_complete) timer_complete_signal.dispatch")
                     if self.is_dispose_on_complete:
                         self.dispose()
                     else:
@@ -307,22 +306,22 @@ class TwistedDeferredTimeout(Timeout):
         # Clear all listeners
         self.timer_signal.remove_all()
         self.timer_complete_signal.remove_all()
-        print("TwTimeout (dispose)", "self._running:", self._running,
-              "time:", time.time() - self._create_time, "name:", self.name)
+        # print("TwTimeout (dispose)", "self._running:", self._running,
+        #       "time:", time.time() - self._create_time, "name:", self.name)
 
     def reset(self):
         self.stop()
         self._iterations = 0
-        print("TwTimeout (reset)", "__running:", self._running,
-              "time:", time.time() - self._create_time, "name:", self.name)
+        # print("TwTimeout (reset)", "__running:", self._running,
+        #       "time:", time.time() - self._create_time, "name:", self.name)
 
     def start(self):
         if self._running or self._iterations >= self.repeat_count > 0:
             return
 
         self._running = True
-        print("TwTimeout (start)", "__running:", self._running,
-              "time:", time.time() - self._create_time, "name:", self.name)
+        # print("TwTimeout (start)", "__running:", self._running,
+        #       "time:", time.time() - self._create_time, "name:", self.name)
         self._deferred = deferLater(reactor, self.delay_sec, self._iteration_complete)
 
     def stop(self):
@@ -330,23 +329,23 @@ class TwistedDeferredTimeout(Timeout):
             return
 
         self._running = False
-        print("TwTimeout (stop)", "__running:", self._running,
-              "time:", time.time() - self._create_time, "name:", self.name)
+        # print("TwTimeout (stop)", "__running:", self._running,
+        #       "time:", time.time() - self._create_time, "name:", self.name)
         self._deferred.cancel()
         self._deferred = None
 
     def _iteration_complete(self):
-        print("TwTimeout (_iteration_complete)", "__running:", self._running, "__iterations:", self._iterations,
-              "repeat_count:", self.repeat_count, "time:", time.time() - self._create_time, "name:", self.name)
+        # print("TwTimeout (_iteration_complete)", "__running:", self._running, "__iterations:", self._iterations,
+        #       "repeat_count:", self.repeat_count, "time:", time.time() - self._create_time, "name:", self.name)
         if self._running:
             if self.repeat_count <= 0 or self._iterations < self.repeat_count:
-                print("TwTimeout   (_iteration_complete) timer_signal.dispatch")
+                # print("TwTimeout   (_iteration_complete) timer_signal.dispatch")
                 self.timer_signal.dispatch()
                 self._iterations += 1
                 if self._iterations == self.repeat_count:
                     # print("           (__run) timer_complete_signal-dispatch")
                     self.timer_complete_signal.dispatch()
-                    print("TwTimeout     (_iteration_complete) timer_complete_signal.dispatch")
+                    # print("TwTimeout     (_iteration_complete) timer_complete_signal.dispatch")
                     if self.is_dispose_on_complete:
                         self.dispose()
                     else:
@@ -371,6 +370,7 @@ class AbstractTimer:
     def _add_timer(cls, timer):
         if timer not in cls._timers:
             cls._timers.append(timer)
+            # print("TIMER *add timer |", timer, cls._is_ticking, "|", cls._timers)
         if not cls._is_ticking and cls._timers:
             cls._start_ticking()
 
@@ -378,6 +378,7 @@ class AbstractTimer:
     def _remove_timer(cls, timer):
         if timer in cls._timers:
             cls._timers.remove(timer)
+            # print("TIMER *remove timer |", timer, cls._is_ticking, "|", cls._timers)
             if cls._is_ticking and not cls._timers:
                 cls._stop_ticking()
 
@@ -397,16 +398,17 @@ class AbstractTimer:
 
     @classmethod
     def _tick(cls):
-        current_time = time.time()
+        # current_time = time.time()
         for timer in cls._timers:
-            # elapsed_time = timer.elapsed_time + (current_time - timer._start_time if timer._start_time > 0 else 0)
-            # if elapsed_time >= timer.delay_sec:
+            # print("#tick#", timer.get_elapsed_time(), ">=", timer.delay_sec, "resolution:", timer.resolution_sec, timer)
             if timer.get_elapsed_time() >= timer.delay_sec:
+                # print(" #tick#TIMER", timer.get_elapsed_time(), timer.delay_sec)
                 timer._timer()
 
     # Object
 
     is_start_zero_delay = True
+    is_async_zero_delay = False  # If True, start timer for delay_sec=0, if false, call immediately
 
     _running = False
 
@@ -420,30 +422,31 @@ class AbstractTimer:
     def paused(self):
         return self._paused
 
+    _elapsed_time = 0
+
+    @property
+    def elapsed_time(self):
+        # return self._elapsed_time
+        return self._elapsed_time + (time.time() - self._start_time if self._start_time > 0 else 0)
+
+    @elapsed_time.setter
+    def elapsed_time(self, value):
+        self._elapsed_time = max(0, value)
+        self._start_time = time.time() if self._running else 0
+
     _start_time = 0
     # (Can be set on restoring saved game precisely from the place it was paused)
-    elapsed_time = 0
     current_count = 0
+    name = None  # for debug
 
-    # ---
-    # @property
-    # def current_count(self):
-    #     return self._current_count
-    #
-    # @property
-    # def elapsed_time(self):
-    #     return self._elapsed_time
-    #
-    # @elapsed_time.setter
-    # def elapsed_time(self, value):
-    #     self._elapsed_time = value
-
-    def __init__(self, callback=None, delay_sec=0, repeat_count=0, name=""):
+    def __init__(self, callback=None, delay_sec=0, repeat_count=0, args=None, name=""):
         self.callback = callback
+        # delay_sec=-1 - disabled, delay_sec=0 - call at once
         self.delay_sec = delay_sec
-        # repeat_count=1 - for timeout mode
+        # repeat_count=1 - for timeout mode, repeat_count<=0 - infinite timer (except when delay_sec=0)
         self.repeat_count = repeat_count
         # (For debug needs)
+        self.args = args
         self.name = name
 
         self.timer_signal = Signal()
@@ -454,14 +457,22 @@ class AbstractTimer:
         self.callback = None
         self.delay_sec = 0
         self.repeat_count = 0
+        self.args = None
+        self.name = None
 
         self.timer_signal.remove_all()
         self.timer_complete_signal.remove_all()
 
-    def get_elapsed_time(self):
-        return self.elapsed_time + (time.time() - self._start_time if self._start_time > 0 else 0)
+    def __str__(self) -> str:
+        return super().__str__() + ("{" + self.name + "}" if self.name else "")
 
-    def start(self, callback=None, delay_sec=-1, repeat_count=-1):
+    # deprecated
+    def get_elapsed_time(self):
+        # print("get_elapsed_time", self.elapsed_time, "+", time.time(), "-", self._start_time)
+        # return self._elapsed_time + (time.time() - self._start_time if self._start_time > 0 else 0)
+        return self.elapsed_time
+
+    def start(self, callback=None, delay_sec=-1, repeat_count=-1, args=None):
         """Start or resume paused"""
         if callback:
             self.callback = callback
@@ -469,31 +480,44 @@ class AbstractTimer:
             self.delay_sec = delay_sec
         if repeat_count >= 0:
             self.repeat_count = repeat_count
+        if args is not None:
+            self.args = args
 
         if self.current_count >= self.repeat_count > 0 or self.delay_sec < 0:
             return
 
         if not self._running and (self.is_start_zero_delay or self.delay_sec):
+            # print("TIMER START", self)
             self._start_time = time.time()
             self._running = True
             self._paused = False
-            self.__class__._add_timer(self)
+            if self.delay_sec > 0 or self.is_async_zero_delay:
+                self.__class__._add_timer(self)
+                # (After _add_timer(), because creating new thread may take about 0.027 sec, which fails some tests)
+                # self._start_time = time.time()
+            else:
+                # (For repeat_count<=0 call only once instead of infinite calling)
+                for i in range(max((1, self.repeat_count))):
+                    self._timer()
+                self.stop()
 
     def stop(self):
         """Stop or pause"""
         if self._running:
+            # print("TIMER  STOP", self)
             # (Save elapsed time since last start to variable)
-            self.elapsed_time += time.time() - self._start_time
+            self.__class__._remove_timer(self)
+            self._elapsed_time += time.time() - self._start_time
             self._start_time = 0
             self._running = False
-            self.__class__._remove_timer(self)
+            # print("TIMER     STOPped", self)
 
     def reset(self):
         """Stop"""
         self.stop()
         # Reset
         self.current_count = 0
-        self.elapsed_time = 0
+        self._elapsed_time = 0
         self._start_time = 0
 
     def restart(self, callback=None, delay_sec=-1, repeat_count=-1):
@@ -514,69 +538,117 @@ class AbstractTimer:
 
     def _timer(self):
         # (Needed only for tests, because in real life it won't be called)
+        # print("##$$_timer", self.current_count)
         if self.current_count >= self.repeat_count > 0:
             return
 
+        # (Call timer once if delay and repeat_count are not set. For is_async_zero_delay=True)
+        if self.delay_sec == 0 and self.repeat_count <= 0 and self.current_count > 0:
+            self.stop()
+            return
+
+        # (To avoid big numbers for infinite timers)
+        # if self.repeat_count > 0:
         self.current_count += 1
-        self.elapsed_time = 0
-        self._start_time = time.time()
 
         # Process timer event
         if self.callback:
-            self.callback()
-        self.timer_signal.dispatch()
+            # print("TIMER CALLBACK", self, self.current_count)
+            self.callback() if not self.args else self.callback(*self.args)
+        # print("SIGNAL TIMER", self)
+        self.timer_signal.dispatch() if not self.args else self.timer_signal.dispatch(*self.args)
         # Process timer complete event
         if self.current_count >= self.repeat_count > 0:
+            # print("SIGNAL TIMER_COMPLETE", self, len(self.timer_complete_signal))
             self.stop()
-            self.timer_complete_signal.dispatch()
+            self.timer_complete_signal.dispatch() if not self.args else self.timer_complete_signal.dispatch(*self.args)
+        else:
+            self._elapsed_time = 0
+            self._start_time = time.time()
 
 
 class ThreadedTimer(AbstractTimer):
 
     _thread = None
-    _lock = threading.RLock()
+    lock = threading.RLock()
+
+    max_idle_sec = 3
+    _idle_start_time = None
 
     @classmethod
     def _start_ticking(cls):
-        with cls._lock:
+        # with cls.lock:
+            # print("TH-TIMER _start_ticking", cls._is_ticking, cls._thread)
             if not cls._is_ticking:
                 cls._is_ticking = True
-                cls._thread = Thread(target=cls.__ticking_thread, name="ThreadedTimer-ticker", daemon=True)
-                cls._thread.start()
+                cls._idle_start_time = None
+                if not cls._thread or cls._thread.is_alive():
+                    # t = time.time()
+                    cls._thread = Thread(target=cls.__ticking_thread, name="ThreadedTimer-ticker", daemon=True)
+                    cls._thread.start()
+                    # print("TH-TIMER Created new timer Thread for %f sec" % (time.time() - t))
+                    # print("TH-TIMER -StarT-new-ticking-thread", threading.current_thread(), "=>", cls._thread, cls._timers)
+                else:
+                    pass
+                    # print("TH-TIMER -StarT-continue", threading.current_thread(), "=>", cls._thread, cls._timers)
 
     @classmethod
     def _stop_ticking(cls):
-        with cls._lock:
+        # with cls.lock:
             if cls._is_ticking:
                 cls._is_ticking = False
-                print("ThreadedTimer.stop_ticking(), thread.join()...")
-                cls._thread.join()
+                cls._idle_start_time = time.time()
+                # print("TH-TIMER -StoP-ticking", threading.current_thread(), cls._timers)
+                # cls._thread.join()
 
     @classmethod
     def __ticking_thread(cls):
-        with cls._lock:
-            while cls._is_ticking:
-                # (Call tick() before sleep() to avoid processing timer after it was stopped)
-                cls._tick()
+        # with cls.lock:
+            # (Idle is to not create new thread on resume timing )
+            while cls._idle_start_time is None or time.time() - cls._idle_start_time < cls.max_idle_sec:
+                while cls._is_ticking:
+                    # (Call tick() before sleep() to avoid processing timer after it was stopped)
+                    t0 = time.time()
+                    # print("TH-TIMER  #TICK", threading.current_thread(), cls._timers, "resolution:", cls.resolution_sec)
+                    with cls.lock:
+                        cls._tick()
+                    t = time.time()
+                    time.sleep(max((0, cls.resolution_sec - (t - t0))))
+                    # # print("TH-TIMER    #TICK", threading.current_thread(), cls._timers, "tick-time:", time.time() - t)
+                    # print("TH-TIMER    #TICK", "tick-time:", time.time() - t, "+", t - t0, "=", time.time() - t0)
                 time.sleep(cls.resolution_sec)
+            cls._thread = None
+            # print("TH-TIMER  ##TICK-FINISH", threading.current_thread(), cls._timers)
+            # print("TH-TIMER  ##TICK-FINISH")
+
+    # def start(self, callback=None, delay_sec=-1, repeat_count=-1, args=None):
+    #     with self.lock:
+    #         super().start(callback, delay_sec, repeat_count, args)
+    #
+    # def stop(self):
+    #     with self.lock:
+    #         super().stop()
+    #
+    # def _timer(self):
+    #     with self.lock:
+    #         super()._timer()
 
 
 class TwistedTimer(AbstractTimer):
 
     _task = None
-    # _lock = threading.RLock()
 
     @classmethod
     def _start_ticking(cls):
-        # with cls._lock:
-            if not cls._is_ticking:
-                cls._is_ticking = True
-                cls._task = LoopingCall(cls._tick)
-                cls._task.start(cls.resolution_sec)
+        if not cls._is_ticking:
+            cls._is_ticking = True
+            t = time.time()
+            cls._task = LoopingCall(cls._tick)
+            cls._task.start(cls.resolution_sec)
+            # print("Created new timer LoopingCall for %f sec" % (time.time() - t))
 
     @classmethod
     def _stop_ticking(cls):
-        # with cls._lock:
-            if cls._is_ticking:
-                cls._is_ticking = False
-                cls._task.stop()
+        if cls._is_ticking:
+            cls._is_ticking = False
+            cls._task.stop()

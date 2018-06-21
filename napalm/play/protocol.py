@@ -13,6 +13,7 @@ Constants.
  update client, which is no good.
 """
 
+
 # Constants
 
 class CurrencyType:
@@ -180,7 +181,7 @@ class GameProtocol(ServerProtocol):
             self.player.house.get_lobby_info_list(self.player)
         elif command_code == client_commands.CHANGE_LOBBY:
             # Client should reconnect to another server by himself
-            lobby_id = -1 if params_count <= 1 else int(command_params[1])
+            lobby_id = None if params_count <= 1 else int(command_params[1])
             self.player.house.goto_lobby(self.player, lobby_id)
         elif command_code == client_commands.GET_ROOMS_LIST:
             # todo?-

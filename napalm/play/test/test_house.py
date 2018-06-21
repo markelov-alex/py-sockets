@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 from unittest import TestCase
 from unittest.mock import Mock, MagicMock
 
@@ -17,22 +18,33 @@ from napalm.socket.protocol import Protocol
 
 
 # Utility
-def assert_properties(self, object, names, values, check_not_empty=True):
+def assert_properties(self, object, names, values, check_not_empty=False):
     for name, value in zip(names, values):
         if check_not_empty:
-            self.assertIsNotNone(value)
+            self.assertIsNotNone(value, name)
             self.assertNotEqual(value, "")
 
-        self.assertEqual(getattr(object, name), value)
+        self.assertEqual(getattr(object, name), value, name)
 
 
 class TestPlayer(TestCase):
+    player_class = Player
+
     player = None
+    user = None
+
+    @property
+    def expected_public_properties(self):
+        return ["1234", "76543", "Sidor", "Kovpak",
+                "avatar.url", "avatar.url.small", "avatar.url.normal",
+                15, 120000, 1000, 1,
+                "2017-01-01", "some.gift.url", 5,
+                True, False]
 
     def setUp(self):
         super().setUp()
 
-        self.player = Player()
+        self.player = self.player_class()
 
         self.player.user = User()
         self.player.user.import_data(["1234", "76543", "Sidor", "Kovpak",
@@ -72,56 +84,62 @@ class TestPlayer(TestCase):
         self.assertIsNone(self.player.room_id)
         self.assertEqual(self.player.place_index, -1)
         self.assertEqual(self.player.is_playing, False)
-        self.assertIsNone(self.player.logging)
+        # self.assertIsNone(self.player.logging)
 
     def test_properties(self):
         # Mainly used for import
 
-        property_names = ["user_id", "session_id", "lobby_id", "room_id", "place_index", "is_playing",
-                          "money_in_play", "gift_image_url"]
-        initial_values = ["", -1, None, None, -1, False,
-                          0, ""]
-        assert_properties(self, self.player, property_names, initial_values, False)
+        player = Player()
+        property_names = ["session_id", "lobby_id", "room_id", "place_index",
+                          "is_playing", "is_sit_out", "money_in_play", "gift_image_url"]
+        initial_values = [-1, None, None, -1,
+                          False, False, 0, ""]
+        assert_properties(self, player, property_names, initial_values)
 
-        new_values = ["1234", 2, 1, 11, 4, True, 1000, "some.gift.url"]
-        self.player.import_data(new_values)
-        exported_values = self.player.export_data()
+        new_values = [2, 1, 11, 4,
+                      True, True, 1000, "some.gift.url"]
+        player.import_data(new_values)
 
-        assert_properties(self, self.player, property_names, new_values)
+        assert_properties(self, player, property_names, new_values)
+
+        exported_values = player.export_data()
+        new_values[1] = None
+        new_values[2] = None
+
+        assert_properties(self, player, property_names, new_values)
         self.assertEqual(exported_values, new_values)
 
         # Assert lobby_id and room_id updated from lobby and room when exporting
-        new_values[2] = "1144"
-        new_values[3] = "5577"
-        self.player.lobby = Mock(lobby_id="1144")
-        self.player.room = Mock(room_id="5577")
+        new_values[1] = "1144"
+        new_values[2] = "5577"
+        player.lobby = Mock(lobby_id="1144")
+        player.room = Mock(room_id="5577")
 
-        exported_values = self.player.export_data()
+        exported_values = player.export_data()
 
         self.assertEqual(exported_values, new_values)
 
     def test_public_properties(self):
         # Mainly used for export (for client)
 
-        new_values = ["000", 2, 1, 11, 4, True, 1000, "some.url"]
+        new_values = [2, 1, 11, 4, True, False, 1000, "some.gift.url"]
         self.player.import_data(new_values)
+        self.assertFalse(self.player.is_changed)
         property_names = ["user_id", "social_id", "first_name", "last_name",
                           "image_url", "image_url_small", "image_url_normal",
                           "level", "money_amount", "money_in_play", "is_in_game",
                           "join_date", "gift_image_url", "vip_days_available",
-                          "is_playing"]
+                          "is_playing", "is_sit_out"]
 
         exported_values = self.player.export_public_data()
 
         # (Assert property names ain't changed)
-        assert_properties(self, self.player, property_names, exported_values)
-        self.assertEqual(exported_values, ["1234", "76543", "Sidor", "Kovpak",
-                                           "avatar.url", "avatar.url.small", "avatar.url.normal",
-                                           15, 1000, 120000, 1,
-                                           "2017-01-01", "some.gift.url", 5,
-                                           True])
+        self.assertEqual(exported_values, self.expected_public_properties)
+        assert_properties(self, self.player, property_names, exported_values, True)
 
     def test_connected(self):
+        self.player = self.player_class()
+
         self.assertFalse(self.player.is_connected)
 
         self.player.protocol = Protocol()
@@ -134,7 +152,7 @@ class TestPlayer(TestCase):
         self.assertTrue(self.player.is_connected)
 
     def test_update_self_user_info(self):
-        self.player.user = Mock(update_self_user_info=lambda: ["a", "b", "c"])
+        self.player.user = Mock(export_public_data=lambda: ["a", "b", "c"])
         self.player.protocol = MagicMock()
 
         self.player.update_self_user_info()
@@ -148,7 +166,7 @@ class TestPlayer(TestCase):
         max_buy_in = 2000
         self.player.user.money_amount = 5000
 
-        self.player.user._service = Mock(decrease=lambda money: {"money": money})
+        self.player.user._service = Mock(decrease=Mock(side_effect=lambda money: {"money": money}))
         self.player.update_self_user_info = Mock()
         self.assertEqual(self.player.money_in_play, 0)
 
@@ -162,6 +180,7 @@ class TestPlayer(TestCase):
 
         # Not in a game
         self.player.room = Mock(room_model=Mock(min_buy_in=min_buy_in, max_buy_in=max_buy_in))
+        self.player.room.game = None
         self.player.add_money_in_play(1000)
 
         self.player.user._service.decrease.assert_not_called()
@@ -170,7 +189,7 @@ class TestPlayer(TestCase):
         self.assertEqual(self.player.user.money_amount, 5000)
 
         # Empty amount
-        self.player.game = Mock()
+        self.player.game = self.player.room.game = Mock()
         self.player.add_money_in_play(0)
 
         self.player.user._service.decrease.assert_not_called()
@@ -191,7 +210,7 @@ class TestPlayer(TestCase):
         # Between min_buy_in and max_buy_in
         self.player.add_money_in_play(1500)
 
-        self.player.user._service.decrease.assert_called_with(1500)
+        self.player.user._service.decrease.assert_called_with(money=1500)
         self.player.update_self_user_info.assert_called_once()
         self.assertEqual(self.player.money_in_play, 1500)
         self.assertEqual(self.player.user.money_amount, 3500)
@@ -202,7 +221,7 @@ class TestPlayer(TestCase):
         # Above max_buy_in
         self.player.add_money_in_play(3000)
 
-        self.player.user._service.decrease.assert_called_with(500)
+        self.player.user._service.decrease.assert_called_with(money=500)
         self.player.update_self_user_info.assert_called_once()
         self.assertEqual(self.player.money_in_play, 2000)
         self.assertEqual(self.player.user.money_amount, 3000)
@@ -214,7 +233,7 @@ class TestPlayer(TestCase):
         self.player.add_money_in_play(3000)
 
         self.player.user._service.decrease.assert_not_called()
-        self.player.update_self_user_info.assert_called_once()
+        self.player.update_self_user_info.assert_not_called()
         self.assertEqual(self.player.money_in_play, 2000)
         self.assertEqual(self.player.user.money_amount, 3000)
 
@@ -227,22 +246,24 @@ class TestPlayer(TestCase):
         self.player.room = Mock(room_model=Mock(min_buy_in=min_buy_in, max_buy_in=max_buy_in))
         self.player.game = Mock()
 
-        self.player.user._service = Mock(decrease=lambda money: {"money": money})
+        self.player.user._service = Mock(decrease=Mock(side_effect=lambda money: {"money": money}))
         self.player.update_self_user_info = Mock()
         self.assertEqual(self.player.money_in_play, 0)
 
         # Between min_buy_in and max_buy_in
         self.player.add_money_in_play(1000)
 
-        self.player.user._service.decrease.assert_called_with(1000)
+        self.player.user._service.decrease.assert_called_with(money=1000)
         self.player.update_self_user_info.assert_called_once()
         self.assertEqual(self.player.money_in_play, 1000)
         self.assertEqual(self.player.user.money_amount, 500)
+        # (Reset mock)
+        self.player.update_self_user_info.reset_mock()
 
         # Above max_buy_in
         self.player.add_money_in_play(3000)
 
-        self.player.user._service.decrease.assert_called_with(500)
+        self.player.user._service.decrease.assert_called_with(money=500)
         self.player.update_self_user_info.assert_called_once()
         self.assertEqual(self.player.money_in_play, 1500)
         self.assertEqual(self.player.user.money_amount, 0)
@@ -267,7 +288,7 @@ class TestPlayer(TestCase):
         self.player.room = Mock(room_model=Mock(min_buy_in=min_buy_in, max_buy_in=max_buy_in))
         self.player.game = Mock()
 
-        self.player.user._service = Mock(decrease=lambda money: {"money": money})
+        self.player.user._service = Mock(decrease=Mock(side_effect=lambda money: {"money": money}))
         self.player.update_self_user_info = Mock()
         self.assertEqual(self.player.money_in_play, 0)
 
@@ -275,25 +296,23 @@ class TestPlayer(TestCase):
         self.player.add_money_in_play(1000)
 
         self.player.user._service.decrease.assert_not_called()
-        self.player.update_self_user_info.assert_called_once()
+        self.player.update_self_user_info.assert_not_called()
         self.assertEqual(self.player.money_in_play, 0)
         self.assertEqual(self.player.user.money_amount, 500)
 
     def test_remove_money_in_play(self):
         self.player.money_in_play = 1500
         self.player.user.money_amount = 500
-
-        self.player.user._service = Mock(increase=lambda money: {"money": money})
+        self.player.user._service = Mock(increase=Mock(side_effect=lambda money: {"money": money}))
         self.player.update_self_user_info = Mock()
-        self.assertEqual(self.player.money_in_play, 0)
 
         # Call
         self.player.remove_money_in_play()
 
-        self.player.user._service.increase.assert_called_with(1500)
+        self.player.user._service.increase.assert_called_with(money=1500)
         self.player.update_self_user_info.assert_called_once()
         self.assertEqual(self.player.money_in_play, 0)
-        self.assertEqual(self.player.user.money_amount, 1500)
+        self.assertEqual(self.player.user.money_amount, 2000)
         # (Reset mock)
         self.player.user._service.increase.reset_mock()
         self.player.update_self_user_info.reset_mock()
@@ -304,7 +323,7 @@ class TestPlayer(TestCase):
         self.player.user._service.increase.assert_not_called()
         self.player.update_self_user_info.assert_not_called()
         self.assertEqual(self.player.money_in_play, 0)
-        self.assertEqual(self.player.user.money_amount, 1500)
+        self.assertEqual(self.player.user.money_amount, 2000)
 
 
 class TestPlayerManager:
@@ -315,24 +334,26 @@ class TestPlayerManager:
         self.user.player_by_session_id.clear()
 
         property_names = ["session_id", "lobby_id", "room_id", "place_index",
-                          "is_playing", "money_in_play", "gift_image_url"]
-        players_data = [[3, "1", None, -1, False, 0, "some.gift.url"],
-                        [5, "1", "3", 3, False, 1000, None]]
+                          "is_playing", "is_sit_out", "money_in_play", "gift_image_url"]
+        players_data = [[3, "1", None, -1, False, False, 0, "some.gift.url"],
+                        [5, "1", "3", 3, False, False, 1000, ""]]
 
         self.user.players_data = players_data
 
-        self.assertEqual(len(self.user.players_set), 2)
+        self.assertEqual(len(self.user.player_set), 2)
         assert_properties(self, self.user.player_by_session_id[3], property_names, players_data[0])
         assert_properties(self, self.user.player_by_session_id[5], property_names, players_data[1])
-        self.assertTrue(players_data[0] in self.user.players_data)
-        self.assertTrue(players_data[1] in self.user.players_data)
+        self.assertEqual(len(self.user.players_data), 0)
 
-        self.assertEqual(self.user.players_data, players_data)
+        players = list(self.user.player_set)
+        players[0].game = Mock()
+        players[1].room = Mock()
+        self.assertEqual(len(self.user.players_data), 2)
 
         # Adds new players - Not intended to be called more than once (only on restore)
         self.user.players_data = players_data
 
-        self.assertEqual(len(self.user.players_set), 4)
+        self.assertEqual(len(self.user.player_set), 4)
 
     def test_player_manager_constructor(self):
         user = User()
@@ -343,7 +364,7 @@ class TestPlayerManager:
         self.assertEqual(user.max_session_id, None)
 
     def test_player_manager_dispose(self):
-        players = [MagicMock(), MagicMock()]
+        players = [MagicMock(session_id=0), MagicMock(session_id=0)]
         for player in players:
             self.user.add_player(player)
         self.user.on_disconnect(players[0])
@@ -366,7 +387,7 @@ class TestPlayerManager:
     def test_on_connect_and_disconnect(self):
         # 2 players were already added
         self.assertEqual(len(self.user.player_set), 2)
-        self.assertEqual(self.user.player_by_session_id.keys(), [0, 1])
+        self.assertEqual(list(self.user.player_by_session_id.keys()), [0, 1])
         self.assertEqual(self.user.disconnected_player_by_session_id, {})
 
         # Create new player
@@ -374,14 +395,14 @@ class TestPlayerManager:
 
         self.assertEqual(player.session_id, 2)
         self.assertEqual(len(self.user.player_set), 3)
-        self.assertEqual(self.user.player_by_session_id.keys(), [0, 1, 2])
+        self.assertEqual(list(self.user.player_by_session_id.keys()), [0, 1, 2])
         self.assertEqual(self.user.disconnected_player_by_session_id, {})
 
         # Disconnect
         self.user.on_disconnect(player)
 
         self.assertEqual(len(self.user.player_set), 3)
-        self.assertEqual(self.user.player_by_session_id.keys(), [0, 1, 2])
+        self.assertEqual(list(self.user.player_by_session_id.keys()), [0, 1, 2])
         self.assertEqual(self.user.disconnected_player_by_session_id, {2: player})
 
         # Create new disconnected player
@@ -389,7 +410,7 @@ class TestPlayerManager:
 
         self.assertEqual(player2.session_id, 5)
         self.assertEqual(len(self.user.player_set), 4)
-        self.assertEqual(self.user.player_by_session_id.keys(), [0, 1, 2, 5])
+        self.assertEqual(list(self.user.player_by_session_id.keys()), [0, 1, 2, 5])
         self.assertEqual(self.user.disconnected_player_by_session_id, {2: player, 5: player2})
 
         # Connect disconnected player
@@ -397,7 +418,7 @@ class TestPlayerManager:
 
         self.assertEqual(player3, player2)
         self.assertEqual(len(self.user.player_set), 4)
-        self.assertEqual(self.user.player_by_session_id.keys(), [0, 1, 2, 5])
+        self.assertEqual(list(self.user.player_by_session_id.keys()), [0, 1, 2, 5])
         self.assertEqual(self.user.disconnected_player_by_session_id, {2: player})
 
         # Try to connect by same session_id
@@ -406,7 +427,7 @@ class TestPlayerManager:
         self.assertNotEqual(player4, player3)
         self.assertEqual(player4.session_id, 6)
         self.assertEqual(len(self.user.player_set), 5)
-        self.assertEqual(self.user.player_by_session_id.keys(), [0, 1, 2, 5, 6])
+        self.assertEqual(list(self.user.player_by_session_id.keys()), [0, 1, 2, 5, 6])
         self.assertEqual(self.user.disconnected_player_by_session_id, {2: player})
 
         # Connect to some disconnected player with no session_id specified
@@ -415,7 +436,7 @@ class TestPlayerManager:
         self.assertEqual(player5, player)
         self.assertEqual(player5.session_id, 2)
         self.assertEqual(len(self.user.player_set), 5)
-        self.assertEqual(self.user.player_by_session_id.keys(), [0, 1, 2, 5, 6])
+        self.assertEqual(list(self.user.player_by_session_id.keys()), [0, 1, 2, 5, 6])
         self.assertEqual(self.user.disconnected_player_by_session_id, {})
 
         # Connecting again will create new player as there are no more disconnected players
@@ -424,13 +445,13 @@ class TestPlayerManager:
         self.assertEqual(player6.session_id, 3)
         self.assertEqual(len(self.user.player_set), 6)
         self.assertEqual(set(self.user.player_by_session_id.keys()), set([0, 1, 2, 5, 6, 3]))
-        self.assertEqual(self.user.player_by_session_id.keys(), [0, 1, 2, 5, 6, 3])
+        self.assertEqual(list(self.user.player_by_session_id.keys()), [0, 1, 2, 5, 6, 3])
         self.assertEqual(self.user.disconnected_player_by_session_id, {})
 
     def test_add_player(self):
         # 2 players were already added
         self.assertEqual(len(self.user.player_set), 2)
-        self.assertEqual(self.user.player_by_session_id.keys(), [0, 1])
+        self.assertEqual(list(self.user.player_by_session_id.keys()), [0, 1])
         self.assertEqual(self.user.disconnected_player_by_session_id, {})
 
         # Add connected player with defined session_id
@@ -438,7 +459,7 @@ class TestPlayerManager:
         self.user.add_player(player2)
 
         self.assertEqual(len(self.user.player_set), 3)
-        self.assertEqual(self.user.player_by_session_id.keys(), [0, 1, 4])
+        self.assertEqual(list(self.user.player_by_session_id.keys()), [0, 1, 4])
         self.assertEqual(self.user.disconnected_player_by_session_id, {})
 
         # Add disconnected player with undefined session_id
@@ -446,17 +467,17 @@ class TestPlayerManager:
         self.user.add_player(player)
 
         self.assertEqual(len(self.user.player_set), 4)
-        self.assertEqual(self.user.player_by_session_id.keys(), [0, 1, 2, 4])
+        self.assertEqual(set(self.user.player_by_session_id.keys()), {0, 1, 2, 4})
         self.assertEqual(self.user.disconnected_player_by_session_id, {2: player})
 
     def test_remove_player(self):
-        self.user.dispose = Mock()
+        self.user.dispose = Mock(side_effect=self.user.dispose)
         # Add disconnected player with undefined session_id
         player = Player(Mock())
         self.user.add_player(player)
         # 2 players were already added + 1 new
         self.assertEqual(len(self.user.player_set), 3)
-        self.assertEqual(self.user.player_by_session_id.keys(), [0, 1, 2])
+        self.assertEqual(list(self.user.player_by_session_id.keys()), [0, 1, 2])
         self.assertEqual(self.user.disconnected_player_by_session_id, {2: player})
         self.user.dispose.assert_not_called()
 
@@ -467,7 +488,7 @@ class TestPlayerManager:
 
         self.assertIsNone(player.user)
         self.assertEqual(len(self.user.player_set), 2)
-        self.assertEqual(self.user.player_by_session_id.keys(), [0, 1])
+        self.assertEqual(list(self.user.player_by_session_id.keys()), [0, 1])
         self.assertEqual(self.user.disconnected_player_by_session_id, {})
         self.user.dispose.assert_not_called()
 
@@ -479,7 +500,7 @@ class TestPlayerManager:
 
         self.assertIsNone(player.user)
         self.assertEqual(len(self.user.player_set), 1)
-        self.assertEqual(self.user.player_by_session_id.keys(), [1])
+        self.assertEqual(list(self.user.player_by_session_id.keys()), [1])
         self.assertEqual(self.user.disconnected_player_by_session_id, {})
         self.user.dispose.assert_not_called()
 
@@ -491,9 +512,14 @@ class TestPlayerManager:
 
         self.assertIsNone(player.user)
         self.assertEqual(len(self.user.player_set), 0)
-        self.assertEqual(self.user.player_by_session_id.keys(), [])
+        self.assertEqual(list(self.user.player_by_session_id.keys()), [])
         self.assertEqual(self.user.disconnected_player_by_session_id, {})
         self.user.dispose.assert_called_once()
+
+
+class MyService(GameService):
+    def check_auth_sig(self, social_id, access_token, auth_sig, backend_info=None):
+        return True
 
 
 class TestUser(TestCase, TestPlayerManager):
@@ -512,17 +538,21 @@ class TestUser(TestCase, TestPlayerManager):
         # (Make house_config.service_class(...).check_auth_sig() -> True)
         # house_config = Mock(service_class=lambda *args: MagicMock(check_auth_sig=True))
         house_config = HouseConfig(house_id=1, data_dir_path="initial_configs")
-        house_config.service_class=lambda *args: MagicMock(check_auth_sig=True)
+        house_config.service_class = MyService
         self.user = User(house_config)
 
         self.user.import_data(self.values)
 
         # Add players
         self.players = [MagicMock(spec=Player), MagicMock(spec=Player)]
+        self.players[0].session_id = 0
         self.players[0].money_in_play = 1100
         self.players[0].protocol = Mock()
+        self.players[0].game = Mock()
+        self.players[1].session_id = 0
         self.players[1].money_in_play = 5550
         self.players[1].protocol = Mock()
+        self.players[1].game = Mock()
         for player in self.players:
             self.user.add_player(player)
 
@@ -550,6 +580,7 @@ class TestUser(TestCase, TestPlayerManager):
     def test_dispose(self):
         self.user.house = house = MagicMock()
         service = self.user._service
+        service.dispose = Mock(side_effect=service.dispose)
 
         self.user.dispose()
 
@@ -559,7 +590,7 @@ class TestUser(TestCase, TestPlayerManager):
         self.assertIsNone(self.user.house)
         self.assertIsNone(self.user._service)
         self.assertIsNone(self.user.house_config)
-        self.assertIsNone(self.user.logging)
+        # self.assertIsNone(self.user.logging)
         self.assertIsNone(self.user.user_id)
         self.assertIsNone(self.user.social_id)
 
@@ -579,10 +610,11 @@ class TestUser(TestCase, TestPlayerManager):
 
     def test_check_credentials(self):
         self.user._service.check_auth_sig = Mock(return_value=True)
-        self.assertEqual(self.user.social_id, "1234")
+        self.assertEqual(self.user.user_id, "1234")
+        self.assertEqual(self.user.social_id, "76543")
 
         # With one param empty
-        result = self.user.check_credentials("1234", "dddddd", "")
+        result = self.user.check_credentials("76543", "dddddd", "")
 
         self.assertFalse(result)
         self.user._service.check_auth_sig.assert_not_called()
@@ -594,34 +626,34 @@ class TestUser(TestCase, TestPlayerManager):
         self.user._service.check_auth_sig.assert_not_called()
 
         # With one param empty
-        result = self.user.check_credentials("1234", "", "asdf")
+        result = self.user.check_credentials("76543", "", "asdf")
 
         self.assertFalse(result)
         self.user._service.check_auth_sig.assert_not_called()
 
         # Wrong social_id
-        result = self.user.check_credentials("001234", "dddddd", "asdf")
+        result = self.user.check_credentials("0076543", "dddddd", "asdf")
 
         self.assertFalse(result)
         # (social_id is already set before)
-        self.assertEqual(self.user.social_id, "1234")
+        self.assertEqual(self.user.social_id, "76543")
         self.user._service.check_auth_sig.assert_not_called()
 
         # Check OK
-        result = self.user.check_credentials("1234", "dddddd", "asdf")
+        result = self.user.check_credentials("76543", "dddddd", "asdf")
 
         self.assertTrue(result)
-        self.assertEqual(self.user.social_id, "1234")
-        self.user._service.check_auth_sig.assert_called_once_with("1234", "dddddd", "asdf")
+        self.assertEqual(self.user.social_id, "76543")
+        self.user._service.check_auth_sig.assert_called_once_with("76543", "dddddd", "asdf", None)
 
         # Check OK setting social_id
         self.user.social_id = ""
-        result = self.user.check_credentials("001234", "dddddd", "asdf")
+        result = self.user.check_credentials("0076543", "dddddd", "asdf", "temp")
 
         # (social_id set)
         self.assertTrue(result)
-        self.assertEqual(self.user.social_id, "001234", "temp")
-        self.user._service.check_auth_sig.assert_called_with("001234", "dddddd", "asdf", {"some": "for_test_value"})
+        self.assertEqual(self.user.social_id, "0076543")
+        self.user._service.check_auth_sig.assert_called_with("0076543", "dddddd", "asdf", {"some": "for_test_value"})
 
     def test_remove_all_money_in_play(self):
         self.user._service.increase = Mock(side_effect=lambda money: {"money": money})
@@ -631,7 +663,7 @@ class TestUser(TestCase, TestPlayerManager):
         self.assertEqual(result, 6650)
         for player in self.user.player_by_session_id.values():
             self.assertEqual(player.money_in_play, 0)
-        self.user._service.increase.assert_called_once_with(6650)
+        self.user._service.increase.assert_called_once_with(money=6650)
         self.assertEqual(self.user.money_amount, 126650)
 
     def test_take_money(self):
@@ -650,23 +682,23 @@ class TestUser(TestCase, TestPlayerManager):
         self.user._service.decrease.assert_not_called()
 
         # Under min_amount
-        result = self.user.take_money(1100, 1200)
+        result = self.user.take_money(150000, 140000)
 
         self.assertEqual(result, 0)
         self.user._service.decrease.assert_not_called()
 
         # OK
-        result = self.user.take_money(1100, 100)
+        result = self.user.take_money(1100)
 
         self.assertEqual(result, 1100)
-        self.user._service.decrease.assert_called_once_with(1100)
+        self.user._service.decrease.assert_called_once_with(money=1100)
         self.assertEqual(self.user.money_amount, 118900)
 
         # OK - more than user has
-        result = self.user.take_money(110000000, 100)
+        result = self.user.take_money(110000000, 100000)
 
         self.assertEqual(result, 118900)
-        self.user._service.decrease.assert_called_once_with(118900)
+        self.user._service.decrease.assert_called_with(money=118900)
         self.assertEqual(self.user.money_amount, 0)
 
     def test_put_money_back(self):
@@ -688,22 +720,24 @@ class TestUser(TestCase, TestPlayerManager):
         result = self.user.put_money_back(1100)
 
         self.assertEqual(result, 1100)
-        self.user._service.increase.assert_called_once_with(1100)
+        self.user._service.increase.assert_called_once_with(money=1100)
         self.assertEqual(self.user.money_amount, 121100)
 
     def test_update_self_user_info(self):
-        user_info = ["1234", "76543", "Sidor", "Kovpak", "url1", "url2", "url3",
+        user_info = ["1234", "76543", "Sidor", "Kovpak",
+                     "avatar.url", "avatar.url.small", "avatar.url.normal",
                      15, 120000, 1, "2017-01-01", 5]
-        self.assertEqual(self.user.export_data(), user_info)
+        self.assertEqual(self.user.export_public_data(), user_info)
 
-        user_info2 = ["1234", "76543", "Sidor", "Kovpak", "url1#", "url2#", "url3#",
+        user_info2 = ["1234", "76543", "Sidor", "Kovpak",
+                      "url1#", "url2#", "url3#",
                       16, 125500, 2, "2017-01-01", 6]
-        self.user._service.getCurrentUserFullInfo = Mock(side_effect=lambda money: user_info2)
+        self.user._service.getCurrentUserFullInfo = Mock(side_effect=lambda: user_info2)
 
         self.user.update_self_user_info()
 
-        self.assertNotEqual(self.user.export_data(), user_info)
-        self.assertEqual(self.user.export_data(), user_info2)
+        self.assertNotEqual(self.user.export_public_data(), user_info)
+        self.assertEqual(self.user.export_public_data(), user_info2)
         for player in self.user.player_by_session_id.values():
             player.update_self_user_info.assert_called_once()
 
@@ -730,12 +764,12 @@ class TestUserManager:
         self.assertEqual(self.house.players_online, 0)
         self.assertEqual(self.house.players_connected, 0)
 
-        auth_sig = GameService.make_auth_sig("123", "token1", "my_secret")
-        self.house.on_player_connected(Mock(), "123", "token1", auth_sig, "test")
-        auth_sig = GameService.make_auth_sig("123", "token2", "my_secret")
-        self.house.on_player_connected(Mock(), "123", "token2", auth_sig, "test")
-        auth_sig = GameService.make_auth_sig("456", "token3", "my_secret")
-        self.house.on_player_connected(None, "456", "token3", auth_sig, "test")
+        auth_sig = GameService.make_auth_sig("76543", "token1", "my_secret")
+        self.house.on_player_connected(Mock(), "123", "76543", "token1", auth_sig, "test")
+        auth_sig = GameService.make_auth_sig("76543", "token2", "my_secret")
+        self.house.on_player_connected(Mock(), "123", "76543", "token2", auth_sig, "test")
+        auth_sig = GameService.make_auth_sig("98321", "token3", "my_secret")
+        self.house.on_player_connected(None, "456", "98321", "token3", auth_sig, "test")
 
         self.assertEqual(self.house.users_online, 2)
         self.assertEqual(self.house.players_online, 3)
@@ -753,15 +787,15 @@ class TestUserManager:
         self.house.users_data = users_data
 
         self.assertEqual(self.house.users_online, 2)
-        self.assertEqual(self.house.players_online, 2)
+        self.assertEqual(self.house.players_online, 3)
         self.assertEqual(self.house.players_connected, 0)
         self.assertEqual(self.house.house_model.players_online, self.house.players_online)
-        self.assertEqual(self.house._retrieve_user("123").social_id, "76543")
-        self.assertEqual(self.house._retrieve_user("456").social_id, "54243")
+        self.assertEqual(self.house._get_or_create_user("123").social_id, "76543")
+        self.assertEqual(self.house._get_or_create_user("456").social_id, "54243")
         # Assert user_data -> add_user -> goto_lobby
-        player1_1 = self.house._retrieve_user("123").player_by_session_id[0]
-        player1_2 = self.house._retrieve_user("123").player_by_session_id[1]
-        player2_1 = self.house._retrieve_user("456").player_by_session_id[0]
+        player1_1 = self.house._get_or_create_user("123").player_by_session_id[0]
+        player1_2 = self.house._get_or_create_user("123").player_by_session_id[1]
+        player2_1 = self.house._get_or_create_user("456").player_by_session_id[0]
         self.assertIsNotNone(player1_1.game)
         self.assertIsNone(player1_2.game)
         self.assertEqual(player1_1.game, player2_1.game)
@@ -771,11 +805,10 @@ class TestUserManager:
         self.assertEqual(player1_1.place_index, 2)
         self.assertEqual(player2_1.place_index, 3)
 
-        # Getter
-        self.assertEqual(self.house.users_data, users_data)
-
         # Add user
         self.house.on_player_connected(Mock(), "678")
+        auth_sig = GameService.make_auth_sig("333", "token1", "my_secret")
+        self.house.on_player_connected(Mock(), "678", "333", "token1", auth_sig, "test")
 
         self.assertEqual(self.house.users_data["678"][0], "678")
 
@@ -803,17 +836,21 @@ class TestUserManager:
         self.assertEqual(self.house.house_model.players_online, self.house.players_online)
 
         # OK with protocol
-        auth_sig = GameService.make_auth_sig("123", "token1", "my_secret")
-        player1 = self.house.on_player_connected(Mock(), "123", "token1", auth_sig, "test")
+        auth_sig = GameService.make_auth_sig("76543", "token1", "my_secret")
+        player1 = self.house.on_player_connected(
+            Mock(is_ready=True), "123", "76543", "token1", auth_sig, "test")
         # Wrong token
-        auth_sig = GameService.make_auth_sig("123", "token2", "my_secret")
-        player2 = self.house.on_player_connected(Mock(), "123", "token2_WRONG", auth_sig, "test")
+        auth_sig = GameService.make_auth_sig("76543", "token2", "my_secret")
+        player2 = self.house.on_player_connected(
+            Mock(is_ready=True), "123", "76543", "token2_WRONG", auth_sig, "test")
         # OK without protocol
-        auth_sig = GameService.make_auth_sig("456", "token3", "my_secret")
-        player3 = self.house.on_player_connected(None, "456", "token3", auth_sig, "test")
+        auth_sig = GameService.make_auth_sig("98321", "token3", "my_secret")
+        player3 = self.house.on_player_connected(
+            None, "456", "98321", "token3", auth_sig, "test")
         # Doesn't work with empty app_secret
-        auth_sig = GameService.make_auth_sig("456", "token3", "")
-        player4 = self.house.on_player_connected(None, "456", "token3", auth_sig)
+        auth_sig = GameService.make_auth_sig("98321", "token3", "")
+        player4 = self.house.on_player_connected(
+            None, "456", "98321", "token3", auth_sig)
 
         self.assertIsNone(player2)
         self.assertIsNone(player4)
@@ -826,12 +863,12 @@ class TestUserManager:
 
     def test_on_player_disconnected(self):
         # OK with protocol
-        auth_sig = GameService.make_auth_sig("123", "token1", "my_secret")
-        player1 = self.house.on_player_connected(Mock(), "123", "token1", auth_sig, "test")
+        auth_sig = GameService.make_auth_sig("76543", "token1", "my_secret")
+        player1 = self.house.on_player_connected(Mock(is_ready=True), "123", "76543", "token1", auth_sig, "test")
         player1.game = Mock()
         # OK without protocol
-        auth_sig = GameService.make_auth_sig("456", "token3", "my_secret")
-        player2 = self.house.on_player_connected(None, "456", "token3", auth_sig, "test")
+        auth_sig = GameService.make_auth_sig("98321", "token3", "my_secret")
+        player2 = self.house.on_player_connected(None, "456", "98321", "token3", auth_sig, "test")
 
         self.assertEqual(player1.user.user_id, "123")
         self.assertEqual(player2.user.user_id, "456")
@@ -851,11 +888,11 @@ class TestUserManager:
         self.assertIsNotNone(player1.user)
         self.assertIsNone(player2.user)
 
-    def test_retrieve_user(self):
+    def test_get_or_create_user(self):
         self.assertEqual(self.house.users_online, 0)
 
         # Create new
-        user = self.house._retrieve_user("123")
+        user = self.house._get_or_create_user("123")
 
         self.assertEqual(self.house.users_online, 0)
         self.assertIsInstance(user, User)
@@ -863,14 +900,14 @@ class TestUserManager:
         self.assertEqual(user.house_config, self.house.house_config)
 
         # Create new again
-        user2 = self.house._retrieve_user("123")
+        user2 = self.house._get_or_create_user("123")
 
         self.assertEqual(self.house.users_online, 0)
         self.assertNotEqual(user2, user)
 
         # Get previously created
         self.house._add_user(user)
-        user3 = self.house._retrieve_user("123")
+        user3 = self.house._get_or_create_user("123")
 
         self.assertEqual(self.house.users_online, 1)
         self.assertEqual(user3, user)
@@ -881,9 +918,12 @@ class TestUserManager:
         self.assertIsNone(self.house.get_user("123"))
 
         # Create new
-        user = self.house._retrieve_user("123")
+        user = self.house._get_or_create_user("123")
 
-        self.assertEqual(self.house.get_user("123"), user)
+        # self.assertEqual(self.house.get_user("123"), user)
+        self.assertIsNone(self.house.get_user("123"))
+        self.assertIsNotNone(user)
+        self.assertEqual(user.user_id, "123")
 
     def test_add_remove_user(self):
         self.assertEqual(self.house.users_online, 0)
@@ -891,11 +931,11 @@ class TestUserManager:
         self.assertEqual(self.house.players_connected, 0)
 
         user = User(self.house.house_config, "123")
-        player1 = Player()
+        player1 = Player(protocol=Mock(is_ready=False))
         player1.lobby_id, player1.room_id, player1.place_index = "1", "2", 1
-        player2 = Player()
+        player2 = Player(protocol=Mock(is_ready=False))
         player2.lobby_id, player2.room_id, player2.place_index = "1", "3", -1
-        player3 = Player(protocol=Mock())
+        player3 = Player(protocol=Mock(is_ready=True))
         user.add_player(player1)
         user.add_player(player2)
         user.add_player(player3)
@@ -916,7 +956,7 @@ class TestUserManager:
         self.assertEqual(player2.lobby.lobby_id, "1")
         self.assertEqual(player2.room.room_id, "3")
         self.assertIsNone(player2.game)
-        # player2
+        # player3
         self.assertEqual(player3.lobby.lobby_id, "1")
         self.assertIsNone(player3.room)
         self.assertIsNone(player3.game)
@@ -959,16 +999,16 @@ class TestLobbyManager:
         # Getter
         data = self.house.lobbies_data
 
-        self.assertEqual(len(data), 3)
+        self.assertEqual(len(data), 2)
         self.assertEqual(data["2"][0][1], "Lobby 2")
 
         # Setter
-        self.assertEqual(self.house._lobby_by_id["2"].lobby_name, "Lobby 2")
+        self.assertEqual(self.house._lobby_by_id["2"].lobby_model.lobby_name, "Lobby 2")
         data["2"][0][1] = "New Lobby 2@#$"
 
         self.house.lobbies_data = data
 
-        self.assertEqual(self.house._lobby_by_id["2"].lobby_name, "New Lobby 2@#$")
+        self.assertEqual(self.house._lobby_by_id["2"].lobby_model.lobby_name, "New Lobby 2@#$")
 
         # Setter only updates existing lobbies and doesn't create new ones
         self.house.dispose()
@@ -980,18 +1020,18 @@ class TestLobbyManager:
     def test_constructor(self):
         self.assertIsNotNone(self.house.house_config)
         self.assertIsNotNone(self.house.house_model)
-        self.assertEqual(len(self.house._lobby_list), 3)
-        self.assertEqual(len(self.house._lobby_by_id), 3)
+        self.assertEqual(len(self.house._lobby_list), 2)
+        self.assertEqual(len(self.house._lobby_by_id), 2)
         for lobby_id, lobby in self.house._lobby_by_id.items():
             self.assertIsInstance(lobby, Lobby)
             self.assertTrue(lobby in self.house._lobby_list)
-            self.assertTrue(lobby.lobby_model in self.house.house_config.lobby_model_list)
+            self.assertTrue(lobby.lobby_model in self.house.house_config.house_model.lobby_model_list)
 
     def test_lobby_manager_dispose(self):
-        self.assertEqual(len(self.house._lobby_list), 3)
-        self.assertEqual(len(self.house._lobby_by_id), 3)
+        self.assertEqual(len(self.house._lobby_list), 2)
+        self.assertEqual(len(self.house._lobby_by_id), 2)
         for lobby_id, lobby in self.house._lobby_by_id.items():
-            lobby.dispose = Mock()
+            lobby.dispose = Mock(side_effect=lobby.dispose)
 
         self.house.dispose()
 
@@ -1026,17 +1066,15 @@ class TestLobbyManager:
         player = Player()
         player.lobby_id = "2"
         player.room_id = "1"
-        player.lobby_id = 3
+        player.lobby_id = 2
         self.assertIsNone(player.lobby)
         self.assertIsNone(player.room)
-        self.assertIsNone(player.game)
 
         # Default lobby
         self.house.goto_lobby(player)
 
         self.assertEqual(player.lobby.lobby_id, "2")
         self.assertEqual(player.room.room_id, "1")
-        self.assertIsNotNone(player.game)
 
     def test_choose_default_lobby(self):
         result = self.house.choose_default_lobby(None)
@@ -1053,7 +1091,7 @@ class TestLobbyManager:
         house_id = player.protocol.lobby_info_list.call_args[0][0]
         lobby_info_list = player.protocol.lobby_info_list.call_args[0][1]
         self.assertEqual(house_id, self.house.house_model.house_id)
-        self.assertEqual(len(lobby_info_list), 3)
+        self.assertEqual(len(lobby_info_list), 2)
         self.assertEqual(len(lobby_info_list[0]), 3)
 
     def test_send_message_in_room(self):
@@ -1108,7 +1146,8 @@ class TestLobbyManager:
 
         self.house.send_message(MessageType.MSG_TYPE_PUBLIC_SPOKEN, "some text...", player, "345")
 
-        player.lobby.send_message.assert_called_once_with(MessageType.MSG_TYPE_PUBLIC_SPOKEN, "some text...", player, "345")
+        player.lobby.send_message.assert_called_once_with(
+            MessageType.MSG_TYPE_PUBLIC_SPOKEN, "some text...", player, "345")
         # player.room.send_message.assert_not_called()
 
         # (Private)
@@ -1116,7 +1155,8 @@ class TestLobbyManager:
 
         self.house.send_message(MessageType.MSG_TYPE_PRIVATE_SPOKEN, "some text...", player, "345")
 
-        player.lobby.send_message.assert_called_once_with(MessageType.MSG_TYPE_PRIVATE_SPOKEN, "some text...", player, "345")
+        player.lobby.send_message.assert_called_once_with(
+            MessageType.MSG_TYPE_PRIVATE_SPOKEN, "some text...", player, "345")
         # player.room.send_message.assert_not_called()
 
         # (Mail)
@@ -1133,6 +1173,11 @@ class TestSaveLoadHouseStateMixIn:
     dump_file_path = "dumps/server1_state_dump.json"
 
     house = None
+
+    def tearDown(self):
+        # Tear down
+        if os.path.exists(self.dump_file_path):
+            os.remove(self.dump_file_path)
 
     def test_try_save_house_state_on_change(self):
         self.house.save_house_state = Mock()
@@ -1162,49 +1207,51 @@ class TestSaveLoadHouseStateMixIn:
         self.house.save_house_state.assert_called_once()
 
     def test_save_house_state(self):
+        if os.path.exists(self.dump_file_path):
+            os.remove(self.dump_file_path)
         # Disabled
-        self.house_model.is_save_house_state_enabled = False
+        self.house.house_config.house_model.is_save_house_state_enabled = False
 
         self.house.save_house_state()
 
         self.assertFalse(os.path.exists(self.dump_file_path))
 
         # OK
-        self.house_model.is_save_house_state_enabled = True
+        self.house.house_config.house_model.is_save_house_state_enabled = True
 
         self.house.save_house_state()
 
         self.assertTrue(os.path.exists(self.dump_file_path))
-        data = json.load(open(self.dump_file_path))
+        with open(self.dump_file_path) as file:
+            data = json.load(file)
         self.assertEqual(len(data), 3)
         # ?--
-        self.assertIsNotNone(data["model_data"])
-        self.assertIsNotNone(data["lobbies_data"])
-        self.assertIsNotNone(data["users_data"])
-
-        # Tear down
-        os.remove(self.dump_file_path)
+        # self.assertIsNotNone(data["model_data"])
+        # self.assertIsNotNone(data["lobbies_data"])
+        # self.assertIsNotNone(data["users_data"])
 
     def test_restore_house_state(self):
-        self.house.on_player_connected(Mock(), "123", "45678")
+        auth_sig = GameService.make_auth_sig("76543", "token1", "my_secret")
+        self.house.on_player_connected(
+            Mock(is_ready=True), "123", "76543", "token1", auth_sig, "test")
         self.house.save_house_state()
 
-        self.house.house_model.house_name = "some_house_name@#$"
-        self.house._lobby_by_id["2"].lobby_name = "some_lobby_name@#$"
+        self.house.house_model.port = "some_house_name@#$"
+        self.house._lobby_by_id["2"].lobby_model.lobby_name = "some_lobby_name@#$"
         self.house._user_by_id["123"].social_id = "some_social_id@#$"
 
         self.house.restore_house_state()
 
-        self.assertEqual(self.house.house_model.house_name, "server1")
-        self.assertEqual(self.house._lobby_by_id["2"].lobby_name, "Lobby 2")
-        self.assertEqual(self.house._user_by_id["123"].social_id, "45678")
+        self.assertEqual(self.house.house_model.port, 41001)
+        self.assertEqual(self.house._lobby_by_id["2"].lobby_model.lobby_name, "Lobby 2")
+        self.assertEqual(self.house._user_by_id["123"].social_id, "76543")
 
         # Tear down
         os.remove(self.dump_file_path)
 
     def test_save_state(self):
         if os.path.exists("dumps/"):
-            os.remove("dumps/")
+            shutil.rmtree("dumps/")
         self.assertFalse(os.path.exists("dumps/"))
         self.assertFalse(os.path.exists(self.dump_file_path))
 
@@ -1213,6 +1260,8 @@ class TestSaveLoadHouseStateMixIn:
         self.assertTrue(os.path.exists("dumps/"))
         self.assertTrue(os.path.exists(self.dump_file_path))
         data = json.load(open(self.dump_file_path))
+        # with open(self.dump_file_path) as file:
+        #     data = json.load(file)
         self.assertEqual(data, {"a": [1, 2], "b": "value"})
 
         # Tear down
@@ -1221,7 +1270,7 @@ class TestSaveLoadHouseStateMixIn:
     def test_load_state(self):
         # Nothing to load
         if os.path.exists("dumps/"):
-            os.remove("dumps/")
+            shutil.rmtree("dumps/")
         self.assertFalse(os.path.exists("dumps/"))
         self.assertFalse(os.path.exists(self.dump_file_path))
 
@@ -1247,17 +1296,23 @@ class TestHouse(TestCase, TestLobbyManager, TestUserManager, TestSaveLoadHouseSt
     def setUp(self):
         super().setUp()
 
-        house_config = HouseConfig(house_id=0, data_dir_path="initial_configs")
+        house_config = HouseConfig(house_id=1, data_dir_path="initial_configs")
         self.house = House(house_config)
+
+    def tearDown(self):
+        if self.house.house_config:
+            self.house.house_config.dispose()
+        # self.house.dispose()
+        TestSaveLoadHouseStateMixIn.tearDown(self)
 
     def test_export_data(self):
         data = self.house.export_data()
 
         self.assertEqual(len(data), 3)
         # ?--
-        self.assertIn("model_data", data)
-        self.assertIn("lobbies_data", data)
-        self.assertIn("users_data", data)
+        # self.assertIn("model_data", data)
+        # self.assertIn("lobbies_data", data)
+        # self.assertIn("users_data", data)
 
     def test_model_data(self):
         self.assertEqual(self.house.house_model.house_name, "server1")
@@ -1290,7 +1345,8 @@ class TestHouse(TestCase, TestLobbyManager, TestUserManager, TestSaveLoadHouseSt
 
         self.assertIsNone(self.house.house_config)
         self.assertIsNone(self.house.house_model)
-        self.assertIsNone(self.house.logging)
+        # (No need to set None)
+        # self.assertIsNone(self.house.logging)
 
     def test_start(self):
         self.house.restore_house_state = Mock()
@@ -1324,48 +1380,62 @@ class TestHouseModel(TestCase):
                       "is_continue_on_disconnect"]
 
         house_model = HouseModel(properties)
-        house_model.players_online = 1234
+        house_model.players_online = 12347
 
+        self.assertEqual(house_model.default_lobby_id, None)
+        house_model.default_lobby_id = "default_lobby_id"
         for property in properties:
             self.assertEqual(getattr(house_model, property), property)
-        self.assertEqual(house_model.export_data(), properties)
-        self.assertEqual(house_model.export_public_data(), ["house_id", "house_name", "host", "port", 1234])
+        self.assertEqual(house_model.export_data()[:len(properties)], properties)
+        self.assertEqual(house_model.export_public_data(), ["house_id", "house_name", "host", "port", 12347])
 
     def test_on_reload(self):
         # on_relaod from constructor
-        house_config = HouseConfig(house_id=0, data_dir_path="initial_configs")
+        house_config = HouseConfig(house_id=1, data_dir_path="initial_configs")
         # house_model = HouseModel()
         house_model = house_config.house_model
 
-        self.assertEqual(house_model.lobbies, ["1", "2", "3"])
-        self.assertEqual([model.id for model in house_model.lobby_model_list], ["1", "2", "3"])
-        self.assertEqual(len(house_model.lobby_model_by_id), 3)
+        self.assertEqual(house_model.lobbies, ["1", "2"])
+        self.assertEqual([model.id for model in house_model.lobby_model_list], ["1", "2"])
+        self.assertEqual(len(house_model.lobby_model_by_id), 2)
 
         # on_relaod
         house_model.default_lobby_id = "100"
-        LobbyModel.get_model_by_id("2").room_name = "Lobby 2 changed"
+        LobbyModel.get_model_by_id("2").lobby_name = "Lobby 2 changed"
         self.assertEqual(house_model.lobby_model_by_id["1"].lobby_name, "Lobby 1")
         self.assertEqual(house_model.lobby_model_by_id["2"].lobby_name, "Lobby 2")
-        self.assertEqual(len(house_model.lobby_model_by_id), 3)
+        self.assertEqual(len(house_model.lobby_model_by_id), 2)
         self.assertNotIn("55", house_model.lobby_model_by_id)
 
         house_model.on_reload({"lobbies": [[1, "Lobby 1 changed"], ["2"], ["55", "Lobby 55"]]})
 
         self.assertEqual(house_model.lobby_model_by_id["1"].lobby_name, "Lobby 1 changed")
-        self.assertEqual(house_model.lobby_model_by_id["2"].lobby_name, "Lobby 2 changed")
-        self.assertEqual(len(house_model.lobby_model_by_id), 4)
+        self.assertEqual(house_model.lobby_model_by_id["2"].lobby_name, "Lobby 2")
+        self.assertEqual(len(house_model.lobby_model_by_id), 3)
         self.assertIn("55", house_model.lobby_model_by_id)
-        self.assertEqual(house_model.default_lobby_id, -1)
+        self.assertEqual(house_model.default_lobby_id, None)
+
+        house_config.dispose()
 
 
 class TestHouseConfig(TestCase):
     # See also test_core.py
 
+    house_config = None
+
+    def setUp(self):
+        super().setUp()
+
+    def tearDown(self):
+        if self.house_config:
+            self.house_config.dispose()
+        super().tearDown()
+
     def test_constructor(self):
         # Empty
         HouseModel.dispose_models()
 
-        house_config = HouseConfig()
+        house_config = self.house_config = HouseConfig()
 
         self.assertEqual(house_config.house_id, "0")
         self.assertEqual(house_config._data_dir_path, "")
@@ -1391,35 +1461,36 @@ class TestHouseConfig(TestCase):
         self.assertEqual(LobbyModel.model_class, MyLobbyModel)
         self.assertEqual(HouseModel.model_class, MyHouseModel)
         # Loaded
-        self.assertNotEqual(house_config._backend_info_by_backend["test"], {"app_secret": "my_secret"})
-        self.assertNotEqual(house_config.get_backend_info("temp"), {"some": "for_test_value"})
-        self.assertNotEqual(house_config.house_model.house_id, "0")
+        self.assertEqual(house_config._backend_info_by_backend["test"], {"app_secret": "my_secret"})
+        self.assertEqual(house_config.get_backend_info("for_test"), {"some": "for_test_value"})
+        self.assertEqual(house_config.get_backend_info("temp"), {"some": "for_test_value"})
+        self.assertIsNone(house_config.house_model)
 
     def test_dispose(self):
-        house_config = HouseConfig(data_dir_path="initial_configs")
+        house_config = self.house_config = HouseConfig(house_id=1, data_dir_path="initial_configs")
         self.assertGreater(len(GameConfigModel.model_list), 0)
         self.assertGreater(len(RoomModel.model_list), 0)
         self.assertGreater(len(LobbyModel.model_list), 0)
         self.assertGreater(len(HouseModel.model_list), 0)
         self.assertGreater(len(house_config._backend_info_by_backend), 0)
-        house_config.house_model.dispose = Mock()
+        house_config.house_model.dispose = dispose_mock = Mock()
 
         house_config.dispose()
 
-        self.assertEqual(len(GameConfigModel.model_list), 0)
-        self.assertEqual(len(RoomModel.model_list), 0)
-        self.assertEqual(len(LobbyModel.model_list), 0)
-        self.assertEqual(len(HouseModel.model_list), 0)
-        self.assertEqual(len(house_config._backend_info_by_backend), 0)
-        house_config.house_model.dispose.assert_called_once()
+        self.assertIsNone(GameConfigModel.model_list)
+        self.assertIsNone(RoomModel.model_list)
+        self.assertIsNone(LobbyModel.model_list)
+        self.assertIsNone(HouseModel.model_list)
+        self.assertEqual(house_config._backend_info_by_backend, {})
+        dispose_mock.assert_called()  # (Called 2 times)
         self.assertIsNone(house_config.house_model)
-        self.assertIsNone(house_config.logging)
+        # self.assertIsNone(house_config.logging)
 
     def test_reload(self):
-        house_config = HouseConfig(data_dir_path="initial_configs")
+        house_config = self.house_config = HouseConfig(house_id="1", data_dir_path="initial_configs")
         self.assertEqual(house_config.get_backend_info("temp"), {"some": "for_test_value"})
         self.assertEqual(house_config.house_model.lobby_model_by_id["1"].lobby_name, "Lobby 1")
-        self.assertEqual(len(house_config.house_model.lobby_model_by_id), 3)
+        self.assertEqual(len(house_config.house_model.lobby_model_by_id), 2)
 
         house_config._data_dir_path = "changed_configs"
         house_config.reload()
@@ -1430,7 +1501,7 @@ class TestHouseConfig(TestCase):
         self.assertEqual(len(house_config.house_model.lobby_model_by_id), 3)
 
     def test_get_backend_info(self):
-        house_config = HouseConfig()
+        house_config = self.house_config = HouseConfig()
 
         self.assertEqual(house_config.get_backend_info("test"), None)
 
@@ -1441,9 +1512,9 @@ class TestHouseConfig(TestCase):
         self.assertEqual(house_config.get_backend_info("temp"), {"some": "for_test_value"})
 
     def test_load_json(self):
-        house_config = HouseConfig()
+        house_config = self.house_config = HouseConfig()
 
         result = house_config._load_json("initial_configs/rooms.json")
 
         self.assertIsInstance(result, dict)
-        self.assertIn("extra1", result)
+        self.assertIn("holdem_25_50", result)

@@ -9,14 +9,12 @@
 
   "H": {
     "_name_": "POKER_HOLDEM",
-    "param1": "value001",
-    "param2": "value002"
+    "param3": "value__H3"
   },
   "OH": {
     "_name_": "POKER_OMAHA_HILO",
-    "param1": "value003",
-    "param2": "value004",
-    "param3": "value005"
+    "param1": "value__OH1",
+    "param4": "value__OH4"
   },
 
   "40": {

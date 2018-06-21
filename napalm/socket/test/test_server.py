@@ -113,7 +113,7 @@ class TestAbstractServer(TestCase):
 
     def test_dispose(self):
         self.server.stop = Mock()
-        self.server.protocol_factory.dispose = factory_dispose = Mock()
+        self.server.protocol_factory.dispose = factory_dispose = Mock(side_effect=self.server.protocol_factory.dispose)
 
         self.server.dispose()
 
@@ -175,7 +175,7 @@ class TestTwistedHandler(TestCase):
         protocol.process_bytes_list.assert_called_once_with(("my||data||line##",))
 
         # connectionLost
-        protocol.dispose = Mock()
+        protocol.dispose = Mock(side_effect=protocol.dispose)
 
         self.handler.connectionLost()
 

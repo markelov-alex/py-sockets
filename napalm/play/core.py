@@ -13,7 +13,7 @@ from napalm.socket.server import ServerConfig
 from napalm.utils import object_util
 
 
-# todo rename to ServerModel
+# todo rename to ServerModel or AppModel
 class HouseConfig(ServerConfig):
     """
     Each server has its house, and only one house per server.
@@ -42,6 +42,13 @@ class HouseConfig(ServerConfig):
     lobby_model_class = LobbyModel
     room_model_class = RoomModel
     game_config_model_class = GameConfigModel
+
+    @staticmethod
+    def dispose_models():
+        GameConfigModel.dispose_models()
+        RoomModel.dispose_models()
+        LobbyModel.dispose_models()
+        HouseModel.dispose_models()
 
     house_model = None
 
@@ -90,10 +97,7 @@ class HouseConfig(ServerConfig):
             self.__class__.__name__, self.house_id, self.house_name, self.players_online) + config
 
     def dispose(self):
-        GameConfigModel.dispose_models()
-        RoomModel.dispose_models()
-        LobbyModel.dispose_models()
-        HouseModel.dispose_models()
+        self.dispose_models()
 
         self._backend_info_by_backend = {}
 
@@ -101,7 +105,7 @@ class HouseConfig(ServerConfig):
             self.house_model.dispose()
             self.house_model = None
 
-        self.logging = None
+        # self.logging = None
 
     def reload(self):
         """

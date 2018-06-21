@@ -50,7 +50,7 @@ class TestAbstractClient(TestCase):
 
     def test_dispose(self):
         self.client.close = Mock()
-        self.client.protocol_factory.dispose = factory_dispose = Mock()
+        self.client.protocol_factory.dispose = factory_dispose = Mock(side_effect=self.client.protocol_factory.dispose)
 
         self.client.dispose()
 

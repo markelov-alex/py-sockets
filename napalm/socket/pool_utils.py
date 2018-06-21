@@ -39,10 +39,11 @@ class DeferredDisposePool:
         self._removetime_list = []
 
     def dispose(self):
-        print("#(Pool.dispose)")
-        for inst in self._inst_by_key:
+        # print("#(Pool.dispose)")
+        # (list() needed to make a copy)
+        for inst in list(self._inst_by_key):
             inst.dispose()
-        for inst in self._inst_by_removetime:
+        for inst in list(self._inst_by_removetime):
             inst.dispose()
 
         self._inst_by_key = {}
@@ -67,14 +68,14 @@ class DeferredDisposePool:
                     del self._inst_by_removetime[remove_time]
                     self._removetime_list.remove(remove_time)
                     result = inst
-                    print("#(Pool.get_or_create) got in pool by key:", key, result)
+                    # print("#(Pool.get_or_create) got in pool by key:", key, result)
                     break
 
         # Create new otherwise
         if not result and self.inst_class:
             result = self.inst_class()
             setattr(result, self.key_name, key)
-            print("#(Pool.get_or_create) create new inst:", result)
+            # print("#(Pool.get_or_create) create new inst:", result)
 
         # Save in dict by key
         if self.is_multiinstance_by_key:
@@ -83,7 +84,7 @@ class DeferredDisposePool:
             self._inst_by_key[key].append(result)
         else:
             self._inst_by_key[key] = result
-        print("#TEMP(Pool.add) key:", key, "inst:", result, "self._inst_by_key[key]:", self._inst_by_key[key])
+        # print("#TEMP(Pool.add) key:", key, "inst:", result, "self._inst_by_key[key]:", self._inst_by_key[key])
 
         # Increment use-count to avoid disposing an instance when
         # it's been using in another place by the same time
@@ -92,7 +93,8 @@ class DeferredDisposePool:
         self._inst_get_count_by_key[key] += 1
 
         if self._inst_get_count_by_key[key] > 1:
-            print("#(Pool.get_or_create) use-count:", self._inst_get_count_by_key[key], "key:", key, "inst:", result)
+            pass
+            # print("#(Pool.get_or_create) use-count:", self._inst_get_count_by_key[key], "key:", key, "inst:", result)
 
         return result
 
@@ -109,10 +111,10 @@ class DeferredDisposePool:
         if key in self._inst_get_count_by_key:
             self._inst_get_count_by_key[key] -= 1
             if self._inst_get_count_by_key[key] > 0:
-                print("#(Pool.remove) use-count:", self._inst_get_count_by_key[key], "key:", key, "inst:", inst)
+                # print("#(Pool.remove) use-count:", self._inst_get_count_by_key[key], "key:", key, "inst:", inst)
                 return None
 
-        print("#TEMP(Pool.remove) key:", key, "inst:", inst, "self._inst_by_key[key]:", self._inst_by_key[key])
+        # print("#TEMP(Pool.remove) key:", key, "inst:", inst, "self._inst_by_key[key]:", self._inst_by_key[key])
         # Remove from dict by key
         if key in self._inst_by_key:
             if self.is_multiinstance_by_key:
@@ -132,21 +134,22 @@ class DeferredDisposePool:
             self._inst_by_removetime[remove_time] = inst
             self._removetime_list.append(remove_time)
 
-        print("#(Pool.remove) key:", key, "inst:", inst, "insts count:", len(self._inst_by_key),
-              "insts-in-pool:", len(self._inst_by_removetime), "remove_time:", remove_time, "dispose:", dispose)
+        # print("#(Pool.remove) key:", key, "inst:", inst, "insts count:", len(self._inst_by_key),
+        #       "insts-in-pool:", len(self._inst_by_removetime), "remove_time:", remove_time, "dispose:", dispose)
         return inst
 
     def _check_remove_by_timeout(self):
         current_time = time.time()
         remove_count = 0
-        for remove_time in self._removetime_list:
+        # (list() needed to make a copy)
+        for remove_time in list(self._removetime_list):
             if current_time - remove_time < self.DISPOSE_OLD_IN_TIMEOUT_SEC:
                 break
 
             # Dispose inst by timeout
             inst = self._inst_by_removetime[remove_time]
             if inst:
-                print("# (Pool._check_remove_by_timeout) dispose inst for:", getattr(inst, self.key_name))
+                # print("# (Pool._check_remove_by_timeout) dispose inst for:", getattr(inst, self.key_name))
                 inst.dispose()
             del self._inst_by_removetime[remove_time]
 
@@ -154,5 +157,5 @@ class DeferredDisposePool:
 
         if remove_count:
             self._removetime_list = self._removetime_list[remove_count:]
-            print("#(Pool._check_remove_by_timeout) insts-in-pool:", len(self._removetime_list), "==",
-                  len(self._inst_by_removetime))
+            # print("#(Pool._check_remove_by_timeout) insts-in-pool:", len(self._removetime_list), "==",
+            #       len(self._inst_by_removetime))

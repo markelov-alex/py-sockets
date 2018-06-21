@@ -1,4 +1,5 @@
 import atexit
+import collections
 import json
 import logging
 import time
@@ -333,25 +334,32 @@ class ReloadableModel(BaseModel):
     @classmethod
     def dispose_models(cls):
         if cls.model_list:
-            for model in cls.model_list:
+            # (list() needed to make a copy)
+            for model in list(cls.model_list):
                 model.dispose()
         cls._info_by_id = None
         cls.model_list = None
         cls.model_by_id = None
+        cls.model_class = None
 
-    # todo test
     @classmethod
     def create_model(cls, info):
-        return cls.model_class(info)
+        model_factory = cls.model_class or cls
+        return model_factory(info)
 
     @staticmethod
     def prepare_info_data(info_data):
+        if info_data is None:
+            return None
         if isinstance(info_data, list):
             # list -> dict
             info_data = {str(index): info for index, info in enumerate(info_data)}
         elif isinstance(info_data, dict):
             # Stringify keys
             info_data = {str(key): info for key, info in info_data.items()}
+
+        if not isinstance(info_data, collections.Iterable) or isinstance(info_data, str):
+            info_data = {"0": info_data}
         return info_data
 
     @staticmethod
@@ -376,7 +384,7 @@ class ReloadableModel(BaseModel):
         real_id_set = set()
         for id, info in info_data.items():
             # Normalize ids for correct inheritance (common -> custom id)
-            if isinstance(info, dict) and "id" in info and info["id"]:
+            if isinstance(info, dict) and "id" in info and info["id"] and id_name != "id":
                 info[id_name] = info["id"]
                 del info["id"]
 
@@ -402,6 +410,8 @@ class ReloadableModel(BaseModel):
                     new_model = global_model_by_id[id].copy()
                 else:
                     new_model = model_factory(info)
+                if not new_model.id:
+                    new_model.id = id
                 model_by_id[id] = new_model
                 model_list.append(new_model)
             else:
@@ -425,7 +435,7 @@ class ReloadableModel(BaseModel):
     @classmethod
     def get_model_by_id(cls, id):
         id = str(id)
-        return cls.model_by_id[id] if id in cls.model_by_id else None
+        return cls.model_by_id[id] if cls.model_by_id and id in cls.model_by_id else None
 
     @classmethod
     def get_model_copy_by_id(cls, id):
@@ -442,13 +452,13 @@ class ReloadableModel(BaseModel):
     parent_model = None
     derived_models = None
 
+    @property
+    def is_available(self):
+        return not self.is_marked_deleted and (not self.is_marked_for_delete or self.is_available_if_deleting)
+
     # Should be deleted on the first opportunity
     # ("Deleted" means removed from the list or set is_marked_deleted=True)
     _is_marked_for_delete = False
-
-    @property
-    def is_available(self):
-        return not self.is_marked_deleted or self.is_available_if_deleting
 
     @property
     def is_marked_for_delete(self):
@@ -473,6 +483,8 @@ class ReloadableModel(BaseModel):
         self._id = value
 
     def __init__(self, initial_config=None):
+        # todo add to unittests
+        initial_config = self.resolve_info(initial_config)
         super().__init__(initial_config)
 
         self.derived_models = []
@@ -487,7 +499,8 @@ class ReloadableModel(BaseModel):
                 self.parent_model.derived_models.remove(self)
             self.parent_model = None
         if self.derived_models:
-            for model in self.derived_models:
+            # (list() needed to make a copy)
+            for model in list(self.derived_models):
                 model.dispose()
             self.derived_models.clear()
 
@@ -504,16 +517,28 @@ class ReloadableModel(BaseModel):
         new_initial_config = self.resolve_info(new_initial_config)
         # For reset()
         # self._initial_config = new_initial_config
-        if self.id_name in new_initial_config:
-            self._check_id_changed(self.id, new_initial_config[self.id_name])
+        self._check_id_changed(new_initial_config, self.id_name)
+        self._check_id_changed(new_initial_config, "id")
         object_util.set_up_object(self._initial_config, new_initial_config, self._property_names)
         # For apply_changes() if is_change_on_command==True
         self.import_data(new_initial_config)
 
-    def _check_id_changed(self, prev_id, current_id):
-        if prev_id is not None and current_id is not None and prev_id != current_id:
+    # todo unittest
+    def _check_id_changed(self, new_initial_config, id_name):
+        prev_id = self.id
+
+        if isinstance(new_initial_config, list):
+            index = self._property_names.index(id_name)
+            id_name = index if index < len(new_initial_config) else None
+        elif id_name not in new_initial_config:
+            id_name = None
+        current_id = new_initial_config[id_name] if id_name else None
+
+        if prev_id is not None and prev_id != "" and current_id is not None and prev_id != current_id:
             self.logging.error("Model's id is not supposed to be changed, but it changed!"
-                               " prev_id: %s current_id: % for %s", prev_id, current_id, self.__class__)
+                               " prev_id: %s current_id: %s for %s", prev_id, current_id, self.__class__)
+            # (Prevent changing id)
+            new_initial_config[id_name] = None
 
     def copy(self):
         if self.parent_model:
@@ -563,14 +588,16 @@ class ReloadableMultiModel(ReloadableModel):
 
     @classmethod
     def create_multimodel_by_ids(cls, ids):
-        model = cls(ids=ids)
+        model_factory = cls.model_class or cls
+        model = model_factory(ids=ids)
         # model.add_sub_models([cls.get_model_by_id(id) for id in ids])
         return model
 
     # @classmethod
     # def get_multimodel_copy_by_ids(cls, ids):
     #     # Note: all overlapping properties will be overwritten from first ids to last
-    #     model = cls(*ids)
+    #     model_factory = cls.model_class or cls
+    #     model = model_factory(*ids)
     #     # model.add_sub_models([cls.get_model_copy_by_id(id) for id in ids])
     #     return model
 
@@ -638,6 +665,7 @@ class ReloadableMultiModel(ReloadableModel):
     def apply_changes(self):
         # self._initial_config = {}
         id = self.id
+        # Apply changes for each sub model this model consists of
         for sub_model in self._sub_models:
             # if sub_model.is_available and (self.is_changed or sub_model.is_changed):
             if sub_model.is_available:
@@ -645,11 +673,10 @@ class ReloadableMultiModel(ReloadableModel):
                 # object_util.set_up_object(self._initial_config, sub_model._initial_config, self._property_names)
 
                 sub_model.apply_changes()
-                # (Considering that public_property_names is subset of property_names and the latter --
-                # of config_property_names)
-                # -object_util.set_up_object(self, sub_model, self._property_names)
-                # (_config_property_names doesn't contain "_changes_queue")
-                object_util.set_up_object(self, sub_model, self._config_property_names, defaults_to_skip=sub_model.defaults)
+                # (_config_property_names doesn't contain "_changes_queue". Skipping defaults
+                # needed not to override properties with default values of the last sub_model)
+                object_util.set_up_object(self, sub_model, self._config_property_names,
+                                          defaults_to_skip=sub_model.defaults)
                 self.change_time = time.time()
         self.id = id
 
@@ -657,6 +684,8 @@ class ReloadableMultiModel(ReloadableModel):
         super().apply_changes()
 
     def reset(self):
+        object_util.set_up_object(self, self.defaults, self._config_property_names)
+
         super().reset()
 
         # ?

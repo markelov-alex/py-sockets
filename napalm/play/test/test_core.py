@@ -90,12 +90,8 @@ class TestHouseConfigAndModels(TestCase):
 
     # Tests
 
-    def test_dispose(self):
-        house_model = self.house_config.house_model
-        house_model.dispose = Mock()
-
+    def test_dispose_models(self):
         # Ensure
-        self.assertNotEqual(self.house_config._backend_info_by_backend, {})
         self.assertNotEqual(GameConfigModel.model_list, [])
         self.assertNotEqual(RoomModel.model_list, [])
         self.assertNotEqual(LobbyModel.model_list, [])
@@ -106,14 +102,10 @@ class TestHouseConfigAndModels(TestCase):
         self.assertNotEqual(HouseModel.model_by_id, {})
 
         # Dispose
-        self.house_config.dispose()
+        HouseConfig.dispose_models()
 
         # Assert
-        self.assertIsNone(self.house_config.logging)
-        self.assertIsNone(self.house_config.house_model)
-        house_model.dispose.assert_called()
-
-        self.assertEqual(self.house_config._backend_info_by_backend, {})
+        # self.assertIsNone(self.house_config.logging)
         self.assertIsNone(GameConfigModel.model_list)
         self.assertIsNone(RoomModel.model_list)
         self.assertIsNone(LobbyModel.model_list)
@@ -121,6 +113,31 @@ class TestHouseConfigAndModels(TestCase):
         self.assertIsNone(GameConfigModel.model_by_id)
         self.assertIsNone(RoomModel.model_by_id)
         self.assertIsNone(LobbyModel.model_by_id)
+        self.assertIsNone(HouseModel.model_by_id)
+
+    def test_dispose(self):
+        house_model = self.house_config.house_model
+        house_model.dispose = Mock(side_effect=house_model.dispose)
+        HouseConfig.dispose_models = Mock(side_effect=HouseConfig.dispose_models)
+
+        # Ensure
+        self.assertNotEqual(self.house_config._backend_info_by_backend, {})
+        self.assertNotEqual(GameConfigModel.model_list, [])
+        # ...
+        self.assertNotEqual(HouseModel.model_by_id, {})
+
+        # Dispose
+        self.house_config.dispose()
+
+        # Assert
+        # self.assertIsNone(self.house_config.logging)
+        self.assertIsNone(self.house_config.house_model)
+        house_model.dispose.assert_called()
+        HouseConfig.dispose_models.assert_called_once()
+
+        self.assertEqual(self.house_config._backend_info_by_backend, {})
+        self.assertIsNone(GameConfigModel.model_list)
+        # ...
         self.assertIsNone(HouseModel.model_by_id)
 
     def test_house_models(self):
@@ -462,18 +479,27 @@ class TestHouseConfigAndModels(TestCase):
                               MyGameConfigModel.get_model_by_id("OH")]
         game_config_submodels = [MyGameConfigModel.get_model_copy_by_id("H"),
                                  MyGameConfigModel.get_model_copy_by_id("OH")]
+        # expected_list = [{
+        #     "param1": "value1",
+        #     "param2": "value2",
+        #     "param3": "value3"
+        # }, {
+        #     "param1": "value3",
+        #     "param2": "value4",
+        #     "param3": None
+        # }]
         expected_list = [{
-            "param1": "value1",
-            "param2": "value2",
-            "param3": "value3"
+            "param1": None,
+            "param2": None,
+            "param3": "valueH3"
         }, {
-            "param1": "value3",
-            "param2": "value4",
+            "param1": "valueOH1",
+            "param2": None,
             "param3": None
         }]
         for i in range(len(game_config_models)):
-            submodel = game_config_submodels[i]
             model = game_config_models[i]
+            submodel = game_config_submodels[i]
             expected = expected_list[i]
 
             self.assertIsInstance(model, MyGameConfigModel)
@@ -484,14 +510,23 @@ class TestHouseConfigAndModels(TestCase):
         # RELOAD
         self.reload()
 
+        # expected_changed_list = [{
+        #     "param1": "value001",
+        #     "param2": "value002",
+        #     "param3": "value3"
+        # }, {
+        #     "param1": "value003",
+        #     "param2": "value004",
+        #     "param3": "value005"
+        # }]
         expected_changed_list = [{
-            "param1": "value001",
-            "param2": "value002",
-            "param3": "value3"
+            "param1": None,
+            "param2": None,
+            "param3": "value__H3"
         }, {
-            "param1": "value003",
-            "param2": "value004",
-            "param3": "value005"
+            "param1": "value__OH1",
+            "param2": None,
+            "param3": None
         }]
         for i in range(len(game_config_models)):
             model = game_config_models[i]

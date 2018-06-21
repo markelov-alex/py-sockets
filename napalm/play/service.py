@@ -32,19 +32,19 @@ class GameService:
 
     @property
     def domain(self):
-        return self.backend_info["domain"]
+        return self.backend_info["domain"] if self.backend_info else None
 
     @property
     def secured(self):
-        return self.backend_info["secured"]
+        return self.backend_info["secured"] if self.backend_info else None
 
     @property
     def app_secret(self):
-        return self.backend_info["app_secret"]
+        return self.backend_info["app_secret"] if self.backend_info else None
 
     @property
     def napalm_secret(self):
-        return self.backend_info["napalm_secret"]
+        return self.backend_info["napalm_secret"] if self.backend_info else None
 
     def __init__(self):  # , social_id=None, access_token=None, auth_sig=None, backend_info=None):
         self.logging = logging.getLogger("SERVICE")
@@ -60,7 +60,8 @@ class GameService:
 
     # todo call
     def dispose(self):
-        self.logging = None
+        # self.logging = None
+        pass
 
     def check_auth_sig(self, social_id, access_token, auth_sig, backend_info=None):
         if self.social_id and social_id != self.social_id:
@@ -76,11 +77,11 @@ class GameService:
         if sig != auth_sig:
             self.logging.warning(
                 "WARNING! auth_sig mismatch! social_id: %s  %s => sig: %s != auth_sig: %s",
-                self.social_id, self.social_id + "_" + access_token + "_" + self.app_secret, sig, auth_sig)
+                social_id, social_id + "_" + access_token + "_" + self.app_secret, sig, auth_sig)
         else:
             # Set up
-            # (Note: Updating credentials we are trying to avoid access_token expire)
-            self.social_id = social_id
+            # (Note: Updating credentials we are trying to avoid access_token expired)
+            # self.social_id = social_id
             self.access_token = access_token
             self.auth_sig = auth_sig
 
